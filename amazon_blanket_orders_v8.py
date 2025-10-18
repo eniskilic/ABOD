@@ -145,139 +145,131 @@ def parse_blanket_pdf(uploaded_file) -> tuple[List[BlanketOrder], int]:
         for page in pdf.pages:
             full_text += (page.extract_text() or "") + "\n"
         
-        # Better splitting: Use "Shipping Address:" as primary delimiter
-        # This ensures each order block is complete
-        order_blocks = re.split(r"(?=Shipping Address:)", full_text)
+        # Split by "Order ID:" to get order blocks
+        order_blocks = re.split(r"(?=Order ID:)", full_text)
         
         for block in order_blocks:
-            if "Order ID" not in block or "Shipping Address:" not in block:
+            if "Order ID" not in block:
                 continue
             
-            # Check if this is a towel order
+            # Extract the complete order section (from Order ID to next Order ID or end)
+            # This block should contain: Order ID, buyer info, and all items
+            
+            # Check if this block contains towel orders
             if is_towel_order(block):
                 towel_count += 1
                 continue
             
-            # Check if this is a blanket order
+            # Check if this block contains blanket orders
             if "patique Personalized Baby Blanket" not in block and "VC-R4JI-YQED" not in block:
                 continue
             
-            # Extract order metadata ONCE for the entire order
+            # Extract order metadata from THIS specific order block
             order_id = ""
             order_date = ""
             buyer_name = ""
             shipping_service = "Standard"
             
+            # Get Order ID
             order_id_match = ORDER_ID_REGEX.search(block)
             if order_id_match:
                 order_id = order_id_match.group(1).strip()
             
+            # Get Order Date
             date_match = ORDER_DATE_REGEX.search(block)
             if date_match:
                 order_date = date_match.group(1).strip()
             
-            # Extract buyer name from "Ship To:" section
-            buyer_match = BUYER_NAME_REGEX.search(block)
-            if buyer_match:
-                # Get the text after "Ship To:" and before the address lines
-                ship_to_text = buyer_match.group(1)
-                lines = [l.strip() for l in ship_to_text.split("\n") if l.strip()]
-                if lines:
-                    # First non-empty line is the buyer name
-                    buyer_name = lines[0]
-                    # Stop at address numbers/street
-                    if re.match(r'^\d+\s+', buyer_name):
-                        # If first line starts with number, it's an address - look for name before
-                        name_match = re.search(r"Ship To:\s*([^\n]+)", block)
-                        if name_match:
-                            buyer_name = name_match.group(1).strip()
+            # Get Buyer Name - look for "Ship To:" line
+            # The buyer name is the first line after "Ship To:"
+            ship_to_match = re.search(r"Ship To:\s*([^\n]+)", block)
+            if ship_to_match:
+                potential_name = ship_to_match.group(1).strip()
+                # Clean up if it has address info
+                buyer_name = potential_name.split('\n')[0].strip()
             
+            # Get Shipping Service
             shipping_match = SHIPPING_SERVICE_REGEX.search(block)
             if shipping_match:
                 shipping_service = shipping_match.group(1).strip()
             
-            # Find all item sections within this order
-            # Split by "Order Item ID:" to get individual items
-            item_sections = re.split(r"(?=Order Item ID:)", block)
+            # Now find all items in this order
+            # Look for each "Customizations:" section
+            customization_sections = block.split("Customizations:")
             
-            for section in item_sections:
-                # Must have both Order Item ID and Customizations
-                if "Order Item ID:" not in section or "Customizations:" not in section:
-                    continue
-                
-                # Make sure this section is still part of blanket order
-                if "patique Personalized Baby Blanket" not in section and "VC-R4JI-YQED" not in section:
-                    continue
+            # Skip the first element (before first "Customizations:")
+            for i, section in enumerate(customization_sections[1:], 1):
+                # This section contains one item's customization details
                 
                 order = BlanketOrder()
                 
-                # Apply order metadata to each item
+                # Apply order-level metadata
                 order.order_id = order_id
                 order.order_date = order_date
                 order.buyer_name = buyer_name
                 order.shipping_service = shipping_service
                 
-                # Extract quantity from this specific item
-                qty_match = re.search(r"Quantity.*?(\d+)", section, re.IGNORECASE | re.DOTALL)
+                # Extract quantity - look backwards from this customization section
+                # Get text before this customization to find quantity
+                text_before = "Customizations:".join(customization_sections[:i+1])
+                qty_match = re.search(r"Quantity[^\d]*(\d+)", text_before[-200:], re.IGNORECASE)
                 if qty_match:
                     order.quantity = int(qty_match.group(1))
                 
-                # Get customization section
-                custom_split = section.split("Customizations:")
-                if len(custom_split) < 2:
-                    continue
-                    
-                custom_section = custom_split[1]
-                
+                # Extract customization details from this section
                 # Blanket color
-                color_match = re.search(r"Color:\s*([^\n]+)", custom_section)
+                color_match = re.search(r"Color:\s*([^\n]+)", section)
                 if color_match:
                     order.blanket_color = clean_text(color_match.group(1))
                 
                 # Thread color
-                thread_match = re.search(r"Thread Color:\s*([^\n]+)", custom_section, re.IGNORECASE)
+                thread_match = re.search(r"Thread Color:\s*([^\n]+)", section, re.IGNORECASE)
                 if thread_match:
                     thread_raw = clean_text(thread_match.group(1))
                     order.thread_color = thread_raw
                     order.thread_color_es = get_thread_color_spanish(thread_raw)
                 
                 # Embroidery font
-                font_match = re.search(r"Embroidery Font:\s*([^\n]+)", custom_section, re.IGNORECASE)
+                font_match = re.search(r"Embroidery Font:\s*([^\n]+)", section, re.IGNORECASE)
                 if font_match:
                     order.embroidery_font = clean_text(font_match.group(1))
                 
                 # Embroidery length
-                length_match = re.search(r"Choose Embroidery Length:\s*([^\n]+)", custom_section, re.IGNORECASE)
+                length_match = re.search(r"Choose Embroidery Length:\s*([^\n]+)", section, re.IGNORECASE)
                 if length_match:
                     order.embroidery_length = clean_text(length_match.group(1))
                 
                 # Name
-                name_match = re.search(r"Name:\s*([^\n]+)", custom_section)
+                name_match = re.search(r"Name:\s*([^\n]+)", section)
                 if name_match:
                     order.name = clean_text(name_match.group(1)).upper()
                 
                 # Beanie
-                if re.search(r"Personalized Baby Beanie:\s*Yes", custom_section, re.IGNORECASE):
+                if re.search(r"Personalized Baby Beanie:\s*Yes", section, re.IGNORECASE):
                     order.beanie = "YES"
                 else:
                     order.beanie = "NO"
                 
                 # Gift box
-                if re.search(r"Gift Box.*?Yes", custom_section, re.IGNORECASE):
+                if re.search(r"Gift Box.*?Yes", section, re.IGNORECASE):
                     order.gift_box = "YES"
                 else:
                     order.gift_box = "NO"
                 
-                # Gift message - only within this item's section
-                gift_match = re.search(r"Gift Message:\s*(.*?)(?=\n(?:Item subtotal|Grand total|Returning|Quantity|Order Item ID|$))", custom_section, re.IGNORECASE | re.DOTALL)
+                # Gift message - only within this section, stop at item totals
+                gift_match = re.search(r"Gift Message:\s*(.*?)(?=\$|Item subtotal|Grand total|Returning|$)", section, re.IGNORECASE | re.DOTALL)
                 if gift_match:
-                    order.gift_message = clean_text(gift_match.group(1))
-                    order.gift_note = "YES"
+                    msg = clean_text(gift_match.group(1))
+                    if msg:
+                        order.gift_message = msg
+                        order.gift_note = "YES"
+                    else:
+                        order.gift_note = "NO"
                 else:
                     order.gift_note = "NO"
                 
                 # Only add if we have minimum required fields
-                if order.order_id and order.buyer_name:
+                if order.order_id and order.blanket_color:
                     orders.append(order)
     
     return orders, towel_count
