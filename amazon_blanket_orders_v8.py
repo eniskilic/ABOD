@@ -145,11 +145,12 @@ def parse_blanket_pdf(uploaded_file) -> tuple[List[BlanketOrder], int]:
         for page in pdf.pages:
             full_text += (page.extract_text() or "") + "\n"
         
-        # Split by Order ID to get individual orders
-        order_blocks = re.split(r"(?=Order ID:)", full_text)
+        # Better splitting: Use "Shipping Address:" as primary delimiter
+        # This ensures each order block is complete
+        order_blocks = re.split(r"(?=Shipping Address:)", full_text)
         
         for block in order_blocks:
-            if "Order ID" not in block:
+            if "Order ID" not in block or "Shipping Address:" not in block:
                 continue
             
             # Check if this is a towel order
@@ -161,7 +162,7 @@ def parse_blanket_pdf(uploaded_file) -> tuple[List[BlanketOrder], int]:
             if "patique Personalized Baby Blanket" not in block and "VC-R4JI-YQED" not in block:
                 continue
             
-            # Extract order metadata ONCE for the entire block
+            # Extract order metadata ONCE for the entire order
             order_id = ""
             order_date = ""
             buyer_name = ""
@@ -175,22 +176,37 @@ def parse_blanket_pdf(uploaded_file) -> tuple[List[BlanketOrder], int]:
             if date_match:
                 order_date = date_match.group(1).strip()
             
+            # Extract buyer name from "Ship To:" section
             buyer_match = BUYER_NAME_REGEX.search(block)
             if buyer_match:
-                lines = [l.strip() for l in buyer_match.group(1).split("\n") if l.strip()]
+                # Get the text after "Ship To:" and before the address lines
+                ship_to_text = buyer_match.group(1)
+                lines = [l.strip() for l in ship_to_text.split("\n") if l.strip()]
                 if lines:
+                    # First non-empty line is the buyer name
                     buyer_name = lines[0]
+                    # Stop at address numbers/street
+                    if re.match(r'^\d+\s+', buyer_name):
+                        # If first line starts with number, it's an address - look for name before
+                        name_match = re.search(r"Ship To:\s*([^\n]+)", block)
+                        if name_match:
+                            buyer_name = name_match.group(1).strip()
             
             shipping_match = SHIPPING_SERVICE_REGEX.search(block)
             if shipping_match:
                 shipping_service = shipping_match.group(1).strip()
             
-            # Split block into individual items (some orders have multiple blankets)
-            # Split by "Order Item ID:" or "Customizations:"
-            item_sections = re.split(r"(?=Order Item ID:|Customizations:)", block)
+            # Find all item sections within this order
+            # Split by "Order Item ID:" to get individual items
+            item_sections = re.split(r"(?=Order Item ID:)", block)
             
             for section in item_sections:
-                if "Customizations:" not in section:
+                # Must have both Order Item ID and Customizations
+                if "Order Item ID:" not in section or "Customizations:" not in section:
+                    continue
+                
+                # Make sure this section is still part of blanket order
+                if "patique Personalized Baby Blanket" not in section and "VC-R4JI-YQED" not in section:
                     continue
                 
                 order = BlanketOrder()
@@ -201,13 +217,17 @@ def parse_blanket_pdf(uploaded_file) -> tuple[List[BlanketOrder], int]:
                 order.buyer_name = buyer_name
                 order.shipping_service = shipping_service
                 
-                # Extract quantity
+                # Extract quantity from this specific item
                 qty_match = re.search(r"Quantity.*?(\d+)", section, re.IGNORECASE | re.DOTALL)
                 if qty_match:
                     order.quantity = int(qty_match.group(1))
                 
-                # Extract customization details
-                custom_section = section
+                # Get customization section
+                custom_split = section.split("Customizations:")
+                if len(custom_split) < 2:
+                    continue
+                    
+                custom_section = custom_split[1]
                 
                 # Blanket color
                 color_match = re.search(r"Color:\s*([^\n]+)", custom_section)
@@ -248,15 +268,16 @@ def parse_blanket_pdf(uploaded_file) -> tuple[List[BlanketOrder], int]:
                 else:
                     order.gift_box = "NO"
                 
-                # Gift message
-                gift_match = re.search(r"Gift Message:\s*(.*?)(?=\n(?:Item subtotal|Grand total|Returning|Order Item ID|$))", custom_section, re.IGNORECASE | re.DOTALL)
+                # Gift message - only within this item's section
+                gift_match = re.search(r"Gift Message:\s*(.*?)(?=\n(?:Item subtotal|Grand total|Returning|Quantity|Order Item ID|$))", custom_section, re.IGNORECASE | re.DOTALL)
                 if gift_match:
                     order.gift_message = clean_text(gift_match.group(1))
                     order.gift_note = "YES"
                 else:
                     order.gift_note = "NO"
                 
-                if order.order_id:  # Only add if we have at least an order ID
+                # Only add if we have minimum required fields
+                if order.order_id and order.buyer_name:
                     orders.append(order)
     
     return orders, towel_count
@@ -284,87 +305,94 @@ def generate_production_labels(orders: List[BlanketOrder]) -> bytes:
         y -= 0.28 * inch
         
         # Main info boxes - Blanket Color and Quantity
-        box_width = (PAGE_W - 0.8 * inch - 0.1 * inch) / 2
+        box_width = (PAGE_W - 0.6 * inch - 0.15 * inch) / 2
         
         # Blanket Color box
         c.setFillColorRGB(0.93, 0.94, 0.97)
-        c.rect(x0, y - 0.35 * inch, box_width, 0.4 * inch, fill=1, stroke=0)
+        c.rect(x0, y - 0.4 * inch, box_width, 0.42 * inch, fill=1, stroke=0)
         c.setFillColorRGB(0, 0, 0)
-        c.setFont("Helvetica", 11)
-        c.drawString(x0 + 0.1 * inch, y - 0.1 * inch, "Blanket Color")
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(x0 + 0.1 * inch, y - 0.27 * inch, order.blanket_color)
+        c.setFont("Helvetica", 10)
+        c.drawString(x0 + 0.08 * inch, y - 0.12 * inch, "Blanket Color")
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(x0 + 0.08 * inch, y - 0.3 * inch, order.blanket_color[:18])
         
         # Quantity box
         c.setFillColorRGB(0.93, 0.94, 0.97)
-        c.rect(x0 + box_width + 0.1 * inch, y - 0.35 * inch, box_width, 0.4 * inch, fill=1, stroke=0)
+        c.rect(x0 + box_width + 0.15 * inch, y - 0.4 * inch, box_width, 0.42 * inch, fill=1, stroke=0)
         c.setFillColorRGB(0, 0, 0)
-        c.setFont("Helvetica", 11)
-        c.drawString(x0 + box_width + 0.2 * inch, y - 0.1 * inch, "Quantity")
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(x0 + box_width + 0.2 * inch, y - 0.27 * inch, str(order.quantity))
+        c.setFont("Helvetica", 10)
+        c.drawString(x0 + box_width + 0.23 * inch, y - 0.12 * inch, "Quantity")
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(x0 + box_width + 0.23 * inch, y - 0.3 * inch, str(order.quantity))
         
-        y -= 0.5 * inch
+        y -= 0.52 * inch
         
         # Thread Color - Full width, highlighted
         c.setFillColorRGB(1, 0.96, 0.96)
-        c.rect(x0, y - 0.35 * inch, PAGE_W - 0.8 * inch, 0.4 * inch, fill=1, stroke=0)
+        c.rect(x0, y - 0.38 * inch, PAGE_W - 0.6 * inch, 0.42 * inch, fill=1, stroke=0)
         c.setFillColorRGB(0, 0, 0)
-        c.setFont("Helvetica", 11)
-        c.drawString(x0 + 0.1 * inch, y - 0.1 * inch, "Thread Color")
-        c.setFont("Helvetica-Bold", 14)
+        c.setFont("Helvetica", 10)
+        c.drawString(x0 + 0.08 * inch, y - 0.12 * inch, "Thread Color")
+        c.setFont("Helvetica-Bold", 13)
         thread_display = f"{order.thread_color.upper()} ({order.thread_color_es.upper()})" if order.thread_color_es else order.thread_color.upper()
+        # Truncate if too long
+        if len(thread_display) > 40:
+            thread_display = thread_display[:40] + "..."
         c.setFillColorRGB(0.77, 0.19, 0.19)
-        c.drawString(x0 + 0.1 * inch, y - 0.27 * inch, thread_display)
+        c.drawString(x0 + 0.08 * inch, y - 0.3 * inch, thread_display)
         c.setFillColorRGB(0, 0, 0)
         
-        y -= 0.5 * inch
+        y -= 0.48 * inch
         
         # Extras row - Beanie, Gift Box, Gift Note
-        extra_width = (PAGE_W - 0.8 * inch - 0.2 * inch) / 3
+        extra_width = (PAGE_W - 0.6 * inch - 0.3 * inch) / 3
         
         for i, (label, value) in enumerate([
-            ("Include Beanie", order.beanie),
+            ("Beanie", order.beanie),
             ("Gift Box", order.gift_box),
             ("Gift Note", order.gift_note)
         ]):
-            box_x = x0 + i * (extra_width + 0.1 * inch)
+            box_x = x0 + i * (extra_width + 0.15 * inch)
             c.setFillColorRGB(0.9, 1, 0.98)
-            c.rect(box_x, y - 0.3 * inch, extra_width, 0.35 * inch, fill=1, stroke=0)
+            c.rect(box_x, y - 0.35 * inch, extra_width, 0.38 * inch, fill=1, stroke=0)
             c.setFillColorRGB(0, 0, 0)
-            c.setFont("Helvetica", 11)
-            c.drawString(box_x + 0.05 * inch, y - 0.08 * inch, label)
-            c.setFont("Helvetica-Bold", 14)
+            c.setFont("Helvetica", 9)
+            c.drawString(box_x + 0.05 * inch, y - 0.1 * inch, label)
+            c.setFont("Helvetica-Bold", 12)
             c.setFillColorRGB(0.14, 0.31, 0.32)
-            c.drawString(box_x + 0.05 * inch, y - 0.23 * inch, value)
+            c.drawString(box_x + 0.05 * inch, y - 0.27 * inch, value)
             c.setFillColorRGB(0, 0, 0)
         
-        y -= 0.45 * inch
+        y -= 0.47 * inch
         
         # Personalization section
         c.setFillColorRGB(1, 0.98, 0.92)
-        c.rect(x0, y - 0.65 * inch, PAGE_W - 0.8 * inch, 0.7 * inch, fill=1, stroke=0)
+        c.rect(x0, y - 0.7 * inch, PAGE_W - 0.6 * inch, 0.75 * inch, fill=1, stroke=0)
         c.setFillColorRGB(0, 0, 0)
         
-        c.setFont("Helvetica-Bold", 14)
+        c.setFont("Helvetica-Bold", 12)
         c.setFillColorRGB(0.46, 0.26, 0.06)
-        c.drawString(x0 + 0.1 * inch, y - 0.12 * inch, "⭐ PERSONALIZATION ⭐")
+        c.drawString(x0 + 0.08 * inch, y - 0.14 * inch, "⭐ PERSONALIZATION ⭐")
         c.setFillColorRGB(0, 0, 0)
         
-        c.setFont("Helvetica", 14)
-        c.drawString(x0 + 0.1 * inch, y - 0.3 * inch, f"Name: ")
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(x0 + 0.6 * inch, y - 0.3 * inch, order.name)
+        c.setFont("Helvetica", 13)
+        c.drawString(x0 + 0.08 * inch, y - 0.34 * inch, f"Name: ")
+        c.setFont("Helvetica-Bold", 13)
+        # Truncate name if too long
+        name_display = order.name if len(order.name) <= 35 else order.name[:35] + "..."
+        c.drawString(x0 + 0.55 * inch, y - 0.34 * inch, name_display)
         
-        c.setFont("Helvetica", 14)
-        c.drawString(x0 + 0.1 * inch, y - 0.48 * inch, f"Font: ")
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(x0 + 0.5 * inch, y - 0.48 * inch, order.embroidery_font)
+        c.setFont("Helvetica", 13)
+        c.drawString(x0 + 0.08 * inch, y - 0.52 * inch, f"Font: ")
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(x0 + 0.45 * inch, y - 0.52 * inch, order.embroidery_font[:20])
         
-        c.setFont("Helvetica", 14)
-        c.drawString(x0 + 0.1 * inch, y - 0.63 * inch, f"Length: ")
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(x0 + 0.6 * inch, y - 0.63 * inch, order.embroidery_length)
+        c.setFont("Helvetica", 13)
+        c.drawString(x0 + 0.08 * inch, y - 0.68 * inch, f"Length: ")
+        c.setFont("Helvetica-Bold", 13)
+        # Truncate length if needed
+        length_display = order.embroidery_length if len(order.embroidery_length) <= 30 else order.embroidery_length[:30]
+        c.drawString(x0 + 0.55 * inch, y - 0.68 * inch, length_display)
         
         c.showPage()
     
