@@ -161,35 +161,53 @@ def parse_blanket_pdf(uploaded_file) -> tuple[List[BlanketOrder], int]:
             if "patique Personalized Baby Blanket" not in block and "VC-R4JI-YQED" not in block:
                 continue
             
-            order = BlanketOrder()
+            # Extract order metadata ONCE for the entire block
+            order_id = ""
+            order_date = ""
+            buyer_name = ""
+            shipping_service = "Standard"
             
-            # Extract order metadata
             order_id_match = ORDER_ID_REGEX.search(block)
             if order_id_match:
-                order.order_id = order_id_match.group(1).strip()
+                order_id = order_id_match.group(1).strip()
             
             date_match = ORDER_DATE_REGEX.search(block)
             if date_match:
-                order.order_date = date_match.group(1).strip()
+                order_date = date_match.group(1).strip()
             
             buyer_match = BUYER_NAME_REGEX.search(block)
             if buyer_match:
                 lines = [l.strip() for l in buyer_match.group(1).split("\n") if l.strip()]
                 if lines:
-                    order.buyer_name = lines[0]
+                    buyer_name = lines[0]
             
             shipping_match = SHIPPING_SERVICE_REGEX.search(block)
             if shipping_match:
-                order.shipping_service = shipping_match.group(1).strip()
+                shipping_service = shipping_match.group(1).strip()
             
-            # Extract quantity
-            qty_match = re.search(r"Quantity.*?(\d+)", block, re.IGNORECASE | re.DOTALL)
-            if qty_match:
-                order.quantity = int(qty_match.group(1))
+            # Split block into individual items (some orders have multiple blankets)
+            # Split by "Order Item ID:" or "Customizations:"
+            item_sections = re.split(r"(?=Order Item ID:|Customizations:)", block)
             
-            # Extract customization details
-            if "Customizations:" in block:
-                custom_section = block.split("Customizations:")[1].split("Item subtotal")[0]
+            for section in item_sections:
+                if "Customizations:" not in section:
+                    continue
+                
+                order = BlanketOrder()
+                
+                # Apply order metadata to each item
+                order.order_id = order_id
+                order.order_date = order_date
+                order.buyer_name = buyer_name
+                order.shipping_service = shipping_service
+                
+                # Extract quantity
+                qty_match = re.search(r"Quantity.*?(\d+)", section, re.IGNORECASE | re.DOTALL)
+                if qty_match:
+                    order.quantity = int(qty_match.group(1))
+                
+                # Extract customization details
+                custom_section = section
                 
                 # Blanket color
                 color_match = re.search(r"Color:\s*([^\n]+)", custom_section)
@@ -231,15 +249,15 @@ def parse_blanket_pdf(uploaded_file) -> tuple[List[BlanketOrder], int]:
                     order.gift_box = "NO"
                 
                 # Gift message
-                gift_match = re.search(r"Gift Message:\s*(.*?)(?=\n(?:Item subtotal|Grand total|Returning|$))", custom_section, re.IGNORECASE | re.DOTALL)
+                gift_match = re.search(r"Gift Message:\s*(.*?)(?=\n(?:Item subtotal|Grand total|Returning|Order Item ID|$))", custom_section, re.IGNORECASE | re.DOTALL)
                 if gift_match:
                     order.gift_message = clean_text(gift_match.group(1))
                     order.gift_note = "YES"
                 else:
                     order.gift_note = "NO"
-            
-            if order.order_id:  # Only add if we have at least an order ID
-                orders.append(order)
+                
+                if order.order_id:  # Only add if we have at least an order ID
+                    orders.append(order)
     
     return orders, towel_count
 
@@ -253,17 +271,17 @@ def generate_production_labels(orders: List[BlanketOrder]) -> bytes:
     c = canvas.Canvas(buf, pagesize=(PAGE_W, PAGE_H))
     
     for order in orders:
-        x0 = 0.4 * inch
-        y = PAGE_H - 0.4 * inch
+        x0 = 0.3 * inch
+        y = PAGE_H - 0.35 * inch
         
         # Header - Order ID and Buyer
-        c.setFont("Helvetica-Bold", 14)
+        c.setFont("Helvetica-Bold", 13)
         c.drawString(x0, y, f"ORDER: {order.order_id}")
-        y -= 0.25 * inch
+        y -= 0.22 * inch
         
-        c.setFont("Helvetica-Bold", 16)
-        c.drawString(x0, y, order.buyer_name[:40])
-        y -= 0.3 * inch
+        c.setFont("Helvetica-Bold", 15)
+        c.drawString(x0, y, order.buyer_name[:45])
+        y -= 0.28 * inch
         
         # Main info boxes - Blanket Color and Quantity
         box_width = (PAGE_W - 0.8 * inch - 0.1 * inch) / 2
