@@ -65,11 +65,12 @@ st.title("🧵 Amazon Blanket Label Generator — v8.0")
 st.write("""
 ### 🪡 Features
 - **Two Label Types**: Manufacturing labels + Gift message labels
+- **Two-column layout**: Product info (left) | Packaging info (right)
 - **Optimized for B&W printing** with boxes and clear hierarchy
-- **Thread Color** prominently displayed in box
+- **Thread Color in bold box** - most prominent
 - Spanish translation for Thread Color
+- **Embroidered name preserved** as written in PDF
 - Font sizes: 14-16pt for easy reading
-- Auto-UPPERCASE for embroidered names
 """)
 
 uploaded = st.file_uploader("📄 Upload your Amazon packing slip PDF", type=["pdf"])
@@ -123,7 +124,7 @@ if uploaded:
                 thread_color = translate_thread_color(clean_text(t_match.group(1)))
 
             name_match = re.search(r"Name:\s*([^\n]+)", block)
-            customization_name = clean_text(name_match.group(1)).upper() if name_match else ""
+            customization_name = clean_text(name_match.group(1)) if name_match else ""
 
             beanie = "YES" if re.search(r"Personalized Baby Beanie:\s*Yes", block, re.IGNORECASE) else "NO"
             gift_box = "YES" if re.search(r"Gift Box\s*&\s*Gift Card:\s*Yes", block, re.IGNORECASE) else "NO"
@@ -160,7 +161,7 @@ if uploaded:
     st.dataframe(df)
 
     # --------------------------------------
-    # Generate Manufacturing/Packaging Labels (6x4 Landscape)
+    # Generate Manufacturing/Packaging Labels (6x4 Landscape) - Two Column Layout
     # --------------------------------------
     def generate_manufacturing_labels(dataframe):
         buf = BytesIO()
@@ -170,6 +171,7 @@ if uploaded:
         left = 0.3 * inch
         right = W - 0.3 * inch
         top = H - 0.3 * inch
+        middle_x = W / 2
 
         for _, row in dataframe.iterrows():
             y = top
@@ -182,8 +184,7 @@ if uploaded:
             
             c.setFont("Helvetica", 14)
             c.drawString(left, y, f"Buyer: {row['Buyer Name']}")
-            y -= 0.22 * inch
-            c.drawString(left, y, f"Date: {row['Order Date']}")
+            c.drawRightString(right, y, f"Date: {row['Order Date']}")
             y -= 0.3 * inch
 
             # --- THREAD COLOR BOX (Most Important) ---
@@ -196,49 +197,45 @@ if uploaded:
             c.setFont("Helvetica-Bold", 16)
             text_y = box_y + (box_height - 16) / 2
             c.drawString(left + 0.1 * inch, text_y, f"THREAD COLOR: {row['Thread Color']}")
-            y = box_y - 0.25 * inch
+            y = box_y - 0.3 * inch
 
-            # --- Blanket Color ---
-            c.setFont("Helvetica", 14)
-            c.drawString(left, y, f"Blanket Color: {row['Blanket Color']}")
-            y -= 0.35 * inch
-
-            # --- Separator Line ---
-            c.setStrokeColor(colors.black)
+            # --- Vertical Divider Line ---
+            divider_start_y = y
+            c.setStrokeColor(colors.grey)
             c.setLineWidth(1)
-            c.line(left, y, right, y)
-            y -= 0.3 * inch
+            c.line(middle_x, y, middle_x, 0.3 * inch)
 
-            # --- Embroidered Name (Large & Clear) ---
-            c.setFont("Helvetica-Bold", 16)
-            c.drawString(left, y, "★ EMBROIDER NAME:")
-            y -= 0.3 * inch
-            c.setFont("Helvetica-Bold", 18)
-            c.drawString(left + 0.2 * inch, y, row['Customization Name'])
-            y -= 0.35 * inch
-
-            # --- Separator Line ---
-            c.setStrokeColor(colors.black)
-            c.setLineWidth(1)
-            c.line(left, y, right, y)
-            y -= 0.3 * inch
-
-            # --- Packaging Options (Checkboxes) ---
+            # --- LEFT COLUMN: PRODUCT INFO ---
+            y_left = y
             c.setFont("Helvetica-Bold", 15)
-            
-            # Beanie
+            c.drawString(left, y_left, "PRODUCT:")
+            y_left -= 0.3 * inch
+
+            c.setFont("Helvetica", 14)
+            c.drawString(left, y_left, f"Blanket: {row['Blanket Color']}")
+            y_left -= 0.3 * inch
+
+            c.setFont("Helvetica-Bold", 15)
+            c.drawString(left, y_left, f"★ Name: {row['Customization Name']}")
+            y_left -= 0.3 * inch
+
+            c.setFont("Helvetica-Bold", 14)
             checkbox = "☑" if row['Include Beanie'] == "YES" else "☐"
-            c.drawString(left, y, f"{checkbox} Include Beanie: {row['Include Beanie']}")
-            y -= 0.28 * inch
+            c.drawString(left, y_left, f"{checkbox} Beanie: {row['Include Beanie']}")
 
-            # Gift Box
+            # --- RIGHT COLUMN: PACKAGING INFO ---
+            y_right = y
+            c.setFont("Helvetica-Bold", 15)
+            c.drawString(middle_x + 0.2 * inch, y_right, "PACKAGING:")
+            y_right -= 0.3 * inch
+
+            c.setFont("Helvetica-Bold", 14)
             checkbox = "☑" if row['Gift Box'] == "YES" else "☐"
-            c.drawString(left, y, f"{checkbox} Gift Box & Card: {row['Gift Box']}")
-            y -= 0.28 * inch
+            c.drawString(middle_x + 0.2 * inch, y_right, f"{checkbox} Gift Box: {row['Gift Box']}")
+            y_right -= 0.3 * inch
 
-            # Gift Message
             checkbox = "☑" if row['Gift Note'] == "YES" else "☐"
-            c.drawString(left, y, f"{checkbox} Gift Message: {row['Gift Note']}")
+            c.drawString(middle_x + 0.2 * inch, y_right, f"{checkbox} Gift Note: {row['Gift Note']}")
 
             c.showPage()
 
