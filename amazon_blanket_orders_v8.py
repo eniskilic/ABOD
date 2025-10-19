@@ -172,7 +172,7 @@ if uploaded:
         left = 0.3 * inch
         right = W - 0.3 * inch
         top = H - 0.3 * inch
-        middle_x = W / 2
+        middle_x = left + (right - left) * 0.60  # 60/40 split
 
         for _, row in dataframe.iterrows():
             y = top
@@ -218,9 +218,44 @@ if uploaded:
             c.drawString(left, y_left, "PRODUCT:")
             y_left -= 0.3 * inch
 
+            # Name with wrapping if too long
             c.setFont("Helvetica-Bold", 15)
-            c.drawString(left, y_left, f"★ Name: {row['Customization Name']}")
-            y_left -= 0.3 * inch
+            name_text = f"★ Name: {row['Customization Name']}"
+            left_column_width = middle_x - left - 0.2 * inch  # Available width for left column
+            
+            # Check if name fits in one line
+            if c.stringWidth(name_text, "Helvetica-Bold", 15) <= left_column_width:
+                # Fits in one line
+                c.drawString(left, y_left, name_text)
+                y_left -= 0.3 * inch
+            else:
+                # Need to wrap - split into two lines
+                c.drawString(left, y_left, "★ Name:")
+                y_left -= 0.25 * inch
+                # Draw name on second line with indent
+                name_only = row['Customization Name']
+                
+                # If still too long, try to split into words
+                words = name_only.split()
+                if len(words) > 1 and c.stringWidth(name_only, "Helvetica-Bold", 15) > left_column_width - 0.3 * inch:
+                    # Split into multiple lines if needed
+                    line1_words = []
+                    line2_words = []
+                    for word in words:
+                        test_line1 = ' '.join(line1_words + [word])
+                        if c.stringWidth(test_line1, "Helvetica-Bold", 15) <= left_column_width - 0.3 * inch:
+                            line1_words.append(word)
+                        else:
+                            line2_words.append(word)
+                    
+                    c.drawString(left + 0.3 * inch, y_left, ' '.join(line1_words))
+                    if line2_words:
+                        y_left -= 0.22 * inch
+                        c.drawString(left + 0.3 * inch, y_left, ' '.join(line2_words))
+                else:
+                    c.drawString(left + 0.3 * inch, y_left, name_only)
+                
+                y_left -= 0.3 * inch
 
             c.setFont("Helvetica-Bold", 14)
             checkbox = "☑" if row['Include Beanie'] == "YES" else "☐"
