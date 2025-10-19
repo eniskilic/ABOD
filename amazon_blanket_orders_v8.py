@@ -4,7 +4,7 @@ import re
 import pandas as pd
 from io import BytesIO
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import inch, landscape
+from reportlab.lib.pagesizes import inch, landscape, portrait
 from reportlab.lib import colors
 
 # --------------------------------------
@@ -59,17 +59,17 @@ def translate_thread_color(color):
 # --------------------------------------
 # Streamlit Setup
 # --------------------------------------
-st.set_page_config(page_title="Amazon Blanket Labels – v7.3.1", layout="centered")
-st.title("🧵 Amazon Blanket Label Generator — v7.3.1")
+st.set_page_config(page_title="Amazon Blanket Labels – v8.0", layout="centered")
+st.title("🧵 Amazon Blanket Label Generator — v8.0")
 
 st.write("""
 ### 🪡 Features
-- Keeps **original PDF order** (1 label per customization)
-- Adds **Quantity** under Order Date  
-- Spanish translation (italic) for **Thread Color**
-- **Grouped sections** with clean separators  
-- Auto-UPPERCASE for Name  
-- **Gift Message fix** — now reads only within product borders  
+- **Two Label Types**: Manufacturing labels + Gift message labels
+- **Optimized for B&W printing** with boxes and clear hierarchy
+- **Thread Color** prominently displayed in box
+- Spanish translation for Thread Color
+- Font sizes: 14-16pt for easy reading
+- Auto-UPPERCASE for embroidered names
 """)
 
 uploaded = st.file_uploader("📄 Upload your Amazon packing slip PDF", type=["pdf"])
@@ -125,11 +125,11 @@ if uploaded:
             name_match = re.search(r"Name:\s*([^\n]+)", block)
             customization_name = clean_text(name_match.group(1)).upper() if name_match else ""
 
-            beanie = "Yes" if re.search(r"Personalized Baby Beanie:\s*Yes", block, re.IGNORECASE) else "No"
-            gift_box = "Yes" if re.search(r"Gift Box\s*&\s*Gift Card:\s*Yes", block, re.IGNORECASE) else "No"
-            gift_note = "Yes" if re.search(r"Gift Message:", block, re.IGNORECASE) else "No"
+            beanie = "YES" if re.search(r"Personalized Baby Beanie:\s*Yes", block, re.IGNORECASE) else "NO"
+            gift_box = "YES" if re.search(r"Gift Box\s*&\s*Gift Card:\s*Yes", block, re.IGNORECASE) else "NO"
+            gift_note = "YES" if re.search(r"Gift Message:", block, re.IGNORECASE) else "NO"
 
-            # ---- FIXED Gift Message extraction ----
+            # Gift Message extraction
             gift_msg_match = re.search(
                 r"Gift Message:\s*([\s\S]*?)(?=\n(?:Grand total|Returning your item|Visit|Quantity|Order Totals|$))",
                 block,
@@ -160,65 +160,85 @@ if uploaded:
     st.dataframe(df)
 
     # --------------------------------------
-    # Generate 6x4 Landscape Labels
+    # Generate Manufacturing/Packaging Labels (6x4 Landscape)
     # --------------------------------------
-    def draw_separator(c, y_pos, W):
-        c.setStrokeColor(colors.lightgrey)
-        c.setLineWidth(0.5)
-        c.line(0.4 * inch, y_pos, W - 0.4 * inch, y_pos)
-
-    def generate_labels(dataframe):
+    def generate_manufacturing_labels(dataframe):
         buf = BytesIO()
         page_size = landscape((4 * inch, 6 * inch))
         c = canvas.Canvas(buf, pagesize=page_size)
         W, H = page_size
-        left = 0.4 * inch
-        top = H - 0.4 * inch
+        left = 0.3 * inch
+        right = W - 0.3 * inch
+        top = H - 0.3 * inch
 
         for _, row in dataframe.iterrows():
             y = top
 
-            # --- Top Group ---
-            c.setFont("Helvetica-Bold", 11)
+            # --- Order Info Section ---
+            c.setFont("Helvetica-Bold", 14)
             c.drawString(left, y, f"Order ID: {row['Order ID']}")
-            y -= 0.22 * inch
-            c.setFont("Helvetica", 10)
-            c.drawString(left, y, row['Buyer Name'])
-            y -= 0.22 * inch
-            c.drawString(left, y, f"Order Date: {row['Order Date']}")
-            y -= 0.22 * inch
-            c.drawString(left, y, f"Quantity: {row['Quantity']}")
-            y -= 0.2 * inch
-            draw_separator(c, y, W)
+            c.drawRightString(right, y, f"Qty: {row['Quantity']}")
             y -= 0.25 * inch
+            
+            c.setFont("Helvetica", 14)
+            c.drawString(left, y, f"Buyer: {row['Buyer Name']}")
+            y -= 0.22 * inch
+            c.drawString(left, y, f"Date: {row['Order Date']}")
+            y -= 0.3 * inch
 
-            # --- Product Colors Group ---
-            c.setFont("Helvetica-Bold", 13)
-            c.drawString(left, y, f"Blanket: {row['Blanket Color']}")
+            # --- THREAD COLOR BOX (Most Important) ---
+            box_height = 0.4 * inch
+            box_y = y - box_height
+            c.setStrokeColor(colors.black)
+            c.setLineWidth(2)
+            c.rect(left, box_y, right - left, box_height, stroke=1, fill=0)
+            
+            c.setFont("Helvetica-Bold", 16)
+            text_y = box_y + (box_height - 16) / 2
+            c.drawString(left + 0.1 * inch, text_y, f"THREAD COLOR: {row['Thread Color']}")
+            y = box_y - 0.25 * inch
+
+            # --- Blanket Color ---
+            c.setFont("Helvetica", 14)
+            c.drawString(left, y, f"Blanket Color: {row['Blanket Color']}")
             y -= 0.35 * inch
-            c.drawString(left, y, f"Thread: {row['Thread Color']}")
-            y -= 0.2 * inch
-            draw_separator(c, y, W)
-            y -= 0.25 * inch
 
-            # --- Embroidery + Beanie Group ---
+            # --- Separator Line ---
+            c.setStrokeColor(colors.black)
+            c.setLineWidth(1)
+            c.line(left, y, right, y)
+            y -= 0.3 * inch
+
+            # --- Embroidered Name (Large & Clear) ---
+            c.setFont("Helvetica-Bold", 16)
+            c.drawString(left, y, "★ EMBROIDER NAME:")
+            y -= 0.3 * inch
+            c.setFont("Helvetica-Bold", 18)
+            c.drawString(left + 0.2 * inch, y, row['Customization Name'])
+            y -= 0.35 * inch
+
+            # --- Separator Line ---
+            c.setStrokeColor(colors.black)
+            c.setLineWidth(1)
+            c.line(left, y, right, y)
+            y -= 0.3 * inch
+
+            # --- Packaging Options (Checkboxes) ---
             c.setFont("Helvetica-Bold", 15)
-            c.drawString(left, y, f"Name: {row['Customization Name']}")
-            y -= 0.4 * inch
-            c.setFont("Helvetica-Bold", 13)
-            c.drawString(left, y, f"Include Beanie: {row['Include Beanie']}")
-            y -= 0.2 * inch
-            draw_separator(c, y, W)
-            y -= 0.25 * inch
+            
+            # Beanie
+            checkbox = "☑" if row['Include Beanie'] == "YES" else "☐"
+            c.drawString(left, y, f"{checkbox} Include Beanie: {row['Include Beanie']}")
+            y -= 0.28 * inch
 
-            # --- Packaging Group (Gift Box / Note) ---
-            c.setFont("Helvetica-Bold", 13)
-            c.drawString(left, y, f"Gift Box: {row['Gift Box']}")
-            y -= 0.35 * inch
-            c.drawString(left, y, f"Gift Note: {row['Gift Note']}")
-            y -= 0.2 * inch
-            draw_separator(c, y, W)
-            y -= 0.2 * inch
+            # Gift Box
+            checkbox = "☑" if row['Gift Box'] == "YES" else "☐"
+            c.drawString(left, y, f"{checkbox} Gift Box & Card: {row['Gift Box']}")
+            y -= 0.28 * inch
+
+            # Gift Message
+            checkbox = "☑" if row['Gift Note'] == "YES" else "☐"
+            c.drawString(left, y, f"{checkbox} Gift Message: {row['Gift Note']}")
 
             c.showPage()
 
@@ -227,13 +247,99 @@ if uploaded:
         return buf
 
     # --------------------------------------
-    # Download PDF
+    # Generate Gift Message Labels (6x4 Landscape - Colorful & Centered)
     # --------------------------------------
-    if st.button("📦 Generate Final 6×4 Labels PDF"):
-        pdf_data = generate_labels(df)
-        st.download_button(
-            label="⬇️ Download Clean Labels (v7.3.1)",
-            data=pdf_data,
-            file_name="Amazon_Labels_v7_3_1.pdf",
-            mime="application/pdf"
-        )
+    def generate_gift_message_labels(dataframe):
+        buf = BytesIO()
+        page_size = landscape((4 * inch, 6 * inch))
+        c = canvas.Canvas(buf, pagesize=page_size)
+        W, H = page_size
+
+        # Filter only orders with gift messages
+        gift_orders = dataframe[dataframe['Gift Message'] != ""]
+
+        if len(gift_orders) == 0:
+            # Create a blank page with message
+            c.setFont("Helvetica", 14)
+            c.drawCentredString(W / 2, H / 2, "No gift messages found in orders")
+            c.showPage()
+        else:
+            for _, row in gift_orders.iterrows():
+                # --- Colorful Background ---
+                c.setFillColor(colors.HexColor("#FFF8DC"))  # Soft cream background
+                c.rect(0, 0, W, H, fill=1, stroke=0)
+                
+                # --- Single Solid Border Frame ---
+                c.setStrokeColor(colors.HexColor("#FFB6C1"))  # Light pink border
+                c.setLineWidth(2)
+                c.setDash([])  # Ensure solid line, not dashed
+                c.rect(0.4 * inch, 0.4 * inch, W - 0.8 * inch, H - 0.8 * inch, stroke=1, fill=0)
+
+                # --- Message Text (Centered & Colorful) ---
+                c.setFillColor(colors.HexColor("#4A4A4A"))  # Dark gray for text
+                c.setFont("Helvetica", 16)
+                message = row['Gift Message']
+                
+                # Simple text wrapping
+                words = message.split()
+                lines = []
+                current_line = []
+                max_width = W - 1.2 * inch  # Leave margins
+                
+                for word in words:
+                    test_line = ' '.join(current_line + [word])
+                    if c.stringWidth(test_line, "Helvetica", 16) < max_width:
+                        current_line.append(word)
+                    else:
+                        if current_line:
+                            lines.append(' '.join(current_line))
+                        current_line = [word]
+                
+                if current_line:
+                    lines.append(' '.join(current_line))
+
+                # Calculate starting y position to vertically center all lines
+                total_height = len(lines) * 0.28 * inch
+                y = (H + total_height) / 2
+
+                # Draw centered lines
+                for line in lines:
+                    c.drawCentredString(W / 2, y, line)
+                    y -= 0.28 * inch
+
+                c.showPage()
+
+        c.save()
+        buf.seek(0)
+        return buf
+
+    # --------------------------------------
+    # Download Buttons
+    # --------------------------------------
+    st.write("---")
+    st.subheader("📥 Generate Your Labels")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("📦 Manufacturing Labels", use_container_width=True):
+            pdf_data = generate_manufacturing_labels(df)
+            st.download_button(
+                label="⬇️ Download Manufacturing Labels",
+                data=pdf_data,
+                file_name="Manufacturing_Labels_v8.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+    
+    with col2:
+        gift_count = len(df[df['Gift Message'] != ""])
+        if st.button(f"💌 Gift Message Labels ({gift_count})", use_container_width=True):
+            pdf_data = generate_gift_message_labels(df)
+            st.download_button(
+                label="⬇️ Download Gift Message Labels",
+                data=pdf_data,
+                file_name="Gift_Message_Labels_v8.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
