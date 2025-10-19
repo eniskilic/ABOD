@@ -265,13 +265,13 @@ if uploaded:
             c.showPage()
         else:
             for _, row in gift_orders.iterrows():
-                # --- Colorful Background ---
-                c.setFillColor(colors.HexColor("#FFF8DC"))  # Soft cream background
+                # --- White Background ---
+                c.setFillColor(colors.white)
                 c.rect(0, 0, W, H, fill=1, stroke=0)
                 
                 # --- Single Solid Border Frame ---
                 c.setStrokeColor(colors.HexColor("#FFB6C1"))  # Light pink border
-                c.setLineWidth(2)
+                c.setLineWidth(3)  # 3pt thickness
                 c.setDash([])  # Ensure solid line, not dashed
                 c.rect(0.4 * inch, 0.4 * inch, W - 0.8 * inch, H - 0.8 * inch, stroke=1, fill=0)
 
