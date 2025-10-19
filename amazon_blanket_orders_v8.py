@@ -43,6 +43,7 @@ def clean_text(s: str) -> str:
         return ""
     s = re.sub(r"\(#?[A-Fa-f0-9]{3,6}\)", "", s)
     s = re.sub(r"■|Seller Name|Your Orders|Returning your item:", "", s)
+    s = re.sub(r"\(Most popular\)", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\s{2,}", " ", s)
     return s.strip()
 
@@ -187,16 +188,22 @@ if uploaded:
             c.drawRightString(right, y, f"Date: {row['Order Date']}")
             y -= 0.3 * inch
 
-            # --- THREAD COLOR BOX (Most Important) ---
-            box_height = 0.4 * inch
+            # --- COLOR BOX: Thread Color & Blanket Color (Most Important) ---
+            box_height = 0.65 * inch
             box_y = y - box_height
             c.setStrokeColor(colors.black)
             c.setLineWidth(2)
             c.rect(left, box_y, right - left, box_height, stroke=1, fill=0)
             
+            # Thread Color (top line in box)
             c.setFont("Helvetica-Bold", 16)
-            text_y = box_y + (box_height - 16) / 2
+            text_y = box_y + box_height - 0.22 * inch
             c.drawString(left + 0.1 * inch, text_y, f"THREAD COLOR: {row['Thread Color']}")
+            
+            # Blanket Color (bottom line in box)
+            text_y -= 0.28 * inch
+            c.setFont("Helvetica-Bold", 15)
+            c.drawString(left + 0.1 * inch, text_y, f"BLANKET COLOR: {row['Blanket Color']}")
             y = box_y - 0.3 * inch
 
             # --- Vertical Divider Line ---
@@ -209,10 +216,6 @@ if uploaded:
             y_left = y
             c.setFont("Helvetica-Bold", 15)
             c.drawString(left, y_left, "PRODUCT:")
-            y_left -= 0.3 * inch
-
-            c.setFont("Helvetica", 14)
-            c.drawString(left, y_left, f"Blanket: {row['Blanket Color']}")
             y_left -= 0.3 * inch
 
             c.setFont("Helvetica-Bold", 15)
