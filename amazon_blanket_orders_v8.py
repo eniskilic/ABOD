@@ -158,6 +158,7 @@ if uploaded:
         st.stop()
 
     df = pd.DataFrame(records)
+    df.index = df.index + 1  # Start row numbering from 1 instead of 0
     st.success(f"✅ {len(df)} labels parsed (in original order).")
     st.dataframe(df)
 
