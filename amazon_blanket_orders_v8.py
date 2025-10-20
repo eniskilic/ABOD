@@ -4,7 +4,7 @@ import re
 import pandas as pd
 from io import BytesIO
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import inch, landscape, portrait
+from reportlab.lib.pagesizes import inch, landscape
 from reportlab.lib import colors
 import requests
 
@@ -47,7 +47,6 @@ COLOR_TRANSLATIONS = {
 # Helper Functions
 # --------------------------------------
 def clean_text(s: str) -> str:
-    """Cleans unwanted symbols and color codes."""
     if not s:
         return ""
     s = re.sub(r"\(#?[A-Fa-f0-9]{3,6}\)", "", s)
@@ -57,7 +56,6 @@ def clean_text(s: str) -> str:
     return s.strip()
 
 def translate_thread_color(color):
-    """Adds Spanish translation."""
     if not color:
         return color
     base = color.strip()
@@ -67,7 +65,6 @@ def translate_thread_color(color):
     return base
 
 def get_bobbin_color(thread_color):
-    """Determine bobbin color based on thread color"""
     thread_lower = thread_color.lower()
     if 'navy' in thread_lower or 'black' in thread_lower or 'negro' in thread_lower:
         return 'Black Bobbin'
@@ -75,32 +72,29 @@ def get_bobbin_color(thread_color):
         return 'White Bobbin'
 
 # --------------------------------------
-# Airtable Functions (UPDATED)
+# Airtable Upload (Modified)
 # --------------------------------------
 def upload_to_airtable(dataframe):
-    """Upload parsed orders to Airtable"""
     headers = {
         "Authorization": f"Bearer {AIRTABLE_PAT}",
         "Content-Type": "application/json"
     }
-    
+
     unique_orders = dataframe[['Order ID', 'Order Date', 'Buyer Name']].drop_duplicates(subset=['Order ID'])
-    
     orders_created = 0
     line_items_created = 0
     errors = []
-    
+
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
     total_orders = len(unique_orders)
-    
+
     for idx, (_, order_row) in enumerate(unique_orders.iterrows()):
         order_id = order_row['Order ID']
-        
+
         try:
             status_text.text(f"Creating order {idx + 1}/{total_orders}: {order_id}")
-            
+
             order_payload = {
                 "records": [{
                     "fields": {
@@ -111,30 +105,28 @@ def upload_to_airtable(dataframe):
                     }
                 }]
             }
-            
+
             response = requests.post(
                 f"https://api.airtable.com/v0/{BASE_ID}/{ORDERS_TABLE}",
                 headers=headers,
                 json=order_payload
             )
-            
+
             if response.status_code == 200:
                 airtable_order_id = response.json()["records"][0]["id"]
                 orders_created += 1
-                
+
                 order_items = dataframe[dataframe['Order ID'] == order_id]
-                
+
                 for _, item_row in order_items.iterrows():
                     line_item_payload = {
                         "records": [{
                             "fields": {
                                 # ✅ Buyer Name first
                                 "Buyer Name": item_row['Buyer Name'],
-                                
-                                # ✅ Customization Name now comes right after Order ID
+                                # ✅ Customization Name moved after Order ID
                                 "Order ID": [airtable_order_id],
                                 "Customization Name": item_row['Customization Name'],
-                                
                                 "Quantity": int(item_row['Quantity']),
                                 "Blanket Color": item_row['Blanket Color'],
                                 "Thread Color": item_row['Thread Color'],
@@ -147,28 +139,28 @@ def upload_to_airtable(dataframe):
                             }
                         }]
                     }
-                    
+
                     item_response = requests.post(
                         f"https://api.airtable.com/v0/{BASE_ID}/{LINE_ITEMS_TABLE}",
                         headers=headers,
                         json=line_item_payload
                     )
-                    
+
                     if item_response.status_code == 200:
                         line_items_created += 1
                     else:
                         errors.append(f"Error creating line item for {order_id}: {item_response.text}")
             else:
                 errors.append(f"Error creating order {order_id}: {response.text}")
-        
+
         except Exception as e:
             errors.append(f"Exception for order {order_id}: {str(e)}")
-        
+
         progress_bar.progress((idx + 1) / total_orders)
-    
+
     status_text.empty()
     progress_bar.empty()
-    
+
     return orders_created, line_items_created, errors
 
 # --------------------------------------
@@ -179,11 +171,10 @@ st.title("🧵 Amazon Blanket Order Manager — v9.0")
 
 st.write("""
 ### 🪡 Features
-- **Parse Amazon PDFs** and generate manufacturing labels
-- **Upload to Airtable** for order tracking & team management
-- **Two-column layout** with smart text wrapping
-- **End-of-day summary** with accurate order counts
-- **Bobbin color grouping** for embroidery setup
+- Parse Amazon PDFs and generate manufacturing labels
+- Upload to Airtable for order tracking & team management
+- End-of-day summary with accurate order counts
+- Bobbin color grouping for embroidery setup
 """)
 
 uploaded = st.file_uploader("📄 Upload your Amazon packing slip PDF", type=["pdf"])
@@ -193,7 +184,6 @@ uploaded = st.file_uploader("📄 Upload your Amazon packing slip PDF", type=["p
 # --------------------------------------
 if uploaded:
     st.info("⏳ Reading and parsing your PDF...")
-
     all_pages = []
     with pdfplumber.open(uploaded) as pdf:
         for page in pdf.pages:
@@ -201,7 +191,6 @@ if uploaded:
             all_pages.append(text)
 
     records = []
-
     for page_text in all_pages:
         buyer_match = re.search(r"Ship To:\s*([\s\S]*?)Order ID:", page_text)
         buyer_name = ""
@@ -273,5 +262,37 @@ if uploaded:
     st.success(f"✅ {len(df)} line items parsed from {df['Order ID'].nunique()} orders")
     st.dataframe(df)
 
-    # The rest of your code (summary, PDF generation, download buttons, etc.)
-    # remains exactly the same as before.
+    # --------------------------------------
+    # Airtable Upload
+    # --------------------------------------
+    st.write("---")
+    st.header("☁️ Upload to Airtable")
+
+    if st.button("🚀 Upload to Airtable", type="primary", use_container_width=True):
+        with st.spinner("Uploading to Airtable..."):
+            orders_created, line_items_created, errors = upload_to_airtable(df)
+
+        if errors:
+            st.error(f"⚠️ Upload completed with {len(errors)} errors")
+            with st.expander("View Errors"):
+                for error in errors:
+                    st.write(f"• {error}")
+        else:
+            st.success(f"✅ Successfully uploaded!")
+
+        col_result1, col_result2 = st.columns(2)
+        with col_result1:
+            st.metric("Orders Created", orders_created)
+        with col_result2:
+            st.metric("Line Items Created", line_items_created)
+
+    # --------------------------------------
+    # Summary
+    # --------------------------------------
+    st.write("---")
+    st.header("📊 End of Day Summary")
+    df['Quantity_Int'] = df['Quantity'].astype(int)
+    total_blankets = df['Quantity_Int'].sum()
+    total_orders = df['Order ID'].nunique()
+    st.metric("Total Blankets", total_blankets)
+    st.metric("Total Orders", total_orders)
