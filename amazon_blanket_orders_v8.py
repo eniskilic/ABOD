@@ -163,8 +163,189 @@ if uploaded:
     st.dataframe(df)
 
     # --------------------------------------
-    # Generate Manufacturing/Packaging Labels (6x4 Landscape) - Two Column Layout
+    # Calculate Summary Statistics
     # --------------------------------------
+    # Convert Quantity to integer for calculations
+    df['Quantity_Int'] = df['Quantity'].astype(int)
+    
+    total_blankets = df['Quantity_Int'].sum()
+    total_beanies = df[df['Include Beanie'] == 'YES']['Quantity_Int'].sum()
+    total_orders = len(df)
+    orders_blanket_only = len(df[df['Include Beanie'] == 'NO'])
+    orders_with_beanie = len(df[df['Include Beanie'] == 'YES'])
+    gift_boxes_needed = len(df[df['Gift Box'] == 'YES'])
+    gift_messages_needed = len(df[df['Gift Note'] == 'YES'])
+    
+    # Breakdown by Blanket Color
+    blanket_color_counts = df.groupby('Blanket Color')['Quantity_Int'].sum().sort_values(ascending=False)
+    
+    # Breakdown by Thread Color
+    thread_color_counts = df.groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
+    
+    # --------------------------------------
+    # Display Summary in Streamlit
+    # --------------------------------------
+    st.write("---")
+    st.header("📊 End of Day Summary")
+    
+    # Main Metrics - Visual Cards
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("🧵 Total Blankets", total_blankets)
+    with col2:
+        st.metric("🧢 Total Beanies", total_beanies)
+    with col3:
+        st.metric("📦 Total Orders", total_orders)
+    with col4:
+        st.metric("💌 Gift Messages", gift_messages_needed)
+    
+    col5, col6, col7, col8 = st.columns(4)
+    
+    with col5:
+        st.metric("🎁 Gift Boxes", gift_boxes_needed)
+    with col6:
+        st.metric("Blanket Only", orders_blanket_only)
+    with col7:
+        st.metric("With Beanie", orders_with_beanie)
+    with col8:
+        st.metric("Unique Blanket Colors", len(blanket_color_counts))
+    
+    # Color Breakdowns
+    st.write("---")
+    col_a, col_b = st.columns(2)
+    
+    with col_a:
+        st.subheader("🎨 Blanket Color Breakdown")
+        for color, count in blanket_color_counts.items():
+            st.write(f"**{color}:** {count}")
+    
+    with col_b:
+        st.subheader("🧵 Thread Color Breakdown")
+        for color, count in thread_color_counts.items():
+            st.write(f"**{color}:** {count}")
+
+    # --------------------------------------
+    # Generate A4 Summary Report PDF
+    # --------------------------------------
+    def generate_summary_pdf(dataframe, summary_stats):
+        buf = BytesIO()
+        from reportlab.lib.pagesizes import A4
+        page_size = A4
+        c = canvas.Canvas(buf, pagesize=page_size)
+        W, H = page_size
+        left = 0.75 * inch
+        right = W - 0.75 * inch
+        top = H - 0.75 * inch
+        
+        y = top
+        
+        # --- Title ---
+        c.setFont("Helvetica-Bold", 24)
+        c.drawCentredString(W / 2, y, "END OF DAY SUMMARY")
+        y -= 0.3 * inch
+        
+        # --- Date ---
+        from datetime import datetime
+        today = datetime.now().strftime("%B %d, %Y")
+        c.setFont("Helvetica", 14)
+        c.drawCentredString(W / 2, y, f"Report Date: {today}")
+        y -= 0.5 * inch
+        
+        # --- Main Statistics Box ---
+        c.setStrokeColor(colors.black)
+        c.setLineWidth(2)
+        box_height = 2.5 * inch
+        box_y = y - box_height
+        c.rect(left, box_y, right - left, box_height, stroke=1, fill=0)
+        
+        y -= 0.3 * inch
+        
+        # Main metrics in grid
+        c.setFont("Helvetica-Bold", 16)
+        col1_x = left + 0.5 * inch
+        col2_x = W / 2 + 0.5 * inch
+        
+        # Row 1
+        c.drawString(col1_x, y, "Total Blankets:")
+        c.drawRightString(col2_x - 0.3 * inch, y, str(summary_stats['total_blankets']))
+        c.drawString(col2_x, y, "Total Beanies:")
+        c.drawRightString(right - 0.5 * inch, y, str(summary_stats['total_beanies']))
+        y -= 0.35 * inch
+        
+        # Row 2
+        c.drawString(col1_x, y, "Total Orders:")
+        c.drawRightString(col2_x - 0.3 * inch, y, str(summary_stats['total_orders']))
+        c.drawString(col2_x, y, "Gift Boxes:")
+        c.drawRightString(right - 0.5 * inch, y, str(summary_stats['gift_boxes']))
+        y -= 0.35 * inch
+        
+        # Row 3
+        c.drawString(col1_x, y, "Blanket Only:")
+        c.drawRightString(col2_x - 0.3 * inch, y, str(summary_stats['blanket_only']))
+        c.drawString(col2_x, y, "Gift Messages:")
+        c.drawRightString(right - 0.5 * inch, y, str(summary_stats['gift_messages']))
+        y -= 0.35 * inch
+        
+        # Row 4
+        c.drawString(col1_x, y, "With Beanie:")
+        c.drawRightString(col2_x - 0.3 * inch, y, str(summary_stats['with_beanie']))
+        c.drawString(col2_x, y, "Unique Colors:")
+        c.drawRightString(right - 0.5 * inch, y, str(summary_stats['unique_colors']))
+        
+        y = box_y - 0.5 * inch
+        
+        # --- Blanket Color Breakdown ---
+        c.setFont("Helvetica-Bold", 18)
+        c.drawString(left, y, "Blanket Color Breakdown")
+        y -= 0.3 * inch
+        
+        c.setStrokeColor(colors.grey)
+        c.setLineWidth(1)
+        c.line(left, y, right, y)
+        y -= 0.25 * inch
+        
+        c.setFont("Helvetica", 14)
+        for color, count in summary_stats['blanket_colors'].items():
+            if y < 2 * inch:  # Start new page if running out of space
+                c.showPage()
+                y = top
+                c.setFont("Helvetica", 14)
+            
+            c.drawString(left + 0.3 * inch, y, f"{color}:")
+            c.drawRightString(right - 0.3 * inch, y, str(count))
+            y -= 0.22 * inch
+        
+        y -= 0.3 * inch
+        
+        # --- Thread Color Breakdown ---
+        if y < 3 * inch:  # Start new page if running out of space
+            c.showPage()
+            y = top
+        
+        c.setFont("Helvetica-Bold", 18)
+        c.drawString(left, y, "Thread Color Breakdown")
+        y -= 0.3 * inch
+        
+        c.setStrokeColor(colors.grey)
+        c.setLineWidth(1)
+        c.line(left, y, right, y)
+        y -= 0.25 * inch
+        
+        c.setFont("Helvetica", 14)
+        for color, count in summary_stats['thread_colors'].items():
+            if y < 1.5 * inch:  # Start new page if running out of space
+                c.showPage()
+                y = top
+                c.setFont("Helvetica", 14)
+            
+            c.drawString(left + 0.3 * inch, y, f"{color}:")
+            c.drawRightString(right - 0.3 * inch, y, str(count))
+            y -= 0.22 * inch
+        
+        c.save()
+        buf.seek(0)
+        return buf
     def generate_manufacturing_labels(dataframe):
         buf = BytesIO()
         page_size = landscape((4 * inch, 6 * inch))
@@ -353,9 +534,9 @@ if uploaded:
     # Download Buttons
     # --------------------------------------
     st.write("---")
-    st.subheader("📥 Generate Your Labels")
+    st.subheader("📥 Generate Your Labels & Reports")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         if st.button("📦 Manufacturing Labels", use_container_width=True):
@@ -376,6 +557,29 @@ if uploaded:
                 label="⬇️ Download Gift Message Labels",
                 data=pdf_data,
                 file_name="Gift_Message_Labels_v8.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+    
+    with col3:
+        if st.button("📊 Summary Report", use_container_width=True):
+            summary_stats = {
+                'total_blankets': total_blankets,
+                'total_beanies': total_beanies,
+                'total_orders': total_orders,
+                'blanket_only': orders_blanket_only,
+                'with_beanie': orders_with_beanie,
+                'gift_boxes': gift_boxes_needed,
+                'gift_messages': gift_messages_needed,
+                'unique_colors': len(blanket_color_counts),
+                'blanket_colors': blanket_color_counts.to_dict(),
+                'thread_colors': thread_color_counts.to_dict()
+            }
+            pdf_data = generate_summary_pdf(df, summary_stats)
+            st.download_button(
+                label="⬇️ Download Summary PDF",
+                data=pdf_data,
+                file_name="Daily_Summary_Report.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
