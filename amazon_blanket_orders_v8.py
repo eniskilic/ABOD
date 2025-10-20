@@ -128,8 +128,9 @@ def upload_to_airtable(dataframe):
                     line_item_payload = {
                         "records": [{
                             "fields": {
-                                "Customization Name": item_row['Customization Name'],
+                                "Buyer Name": order_row['Buyer Name'],
                                 "Order ID": [airtable_order_id],
+                                "Customization Name": item_row['Customization Name'],
                                 "Quantity": int(item_row['Quantity']),
                                 "Blanket Color": item_row['Blanket Color'],
                                 "Thread Color": item_row['Thread Color'],
@@ -758,4 +759,3 @@ if uploaded:
                 mime="application/pdf",
                 use_container_width=True
             )
-
