@@ -170,7 +170,7 @@ if uploaded:
     
     total_blankets = df['Quantity_Int'].sum()
     total_beanies = df[df['Include Beanie'] == 'YES']['Quantity_Int'].sum()
-    total_orders = len(df)
+    total_orders = df['Order ID'].nunique()  # Count unique Order IDs, not rows
     orders_blanket_only = len(df[df['Include Beanie'] == 'NO'])
     orders_with_beanie = len(df[df['Include Beanie'] == 'YES'])
     gift_boxes_needed = len(df[df['Gift Box'] == 'YES'])
