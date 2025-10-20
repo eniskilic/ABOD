@@ -128,7 +128,6 @@ def upload_to_airtable(dataframe):
                     line_item_payload = {
                         "records": [{
                             "fields": {
-                                "Buyer Name": order_row['Buyer Name'],
                                 "Order ID": [airtable_order_id],
                                 "Customization Name": item_row['Customization Name'],
                                 "Quantity": int(item_row['Quantity']),
