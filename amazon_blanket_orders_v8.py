@@ -182,6 +182,22 @@ if uploaded:
     # Breakdown by Thread Color
     thread_color_counts = df.groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
     
+    # Bobbin Color Grouping
+    def get_bobbin_color(thread_color):
+        """Determine bobbin color based on thread color"""
+        thread_lower = thread_color.lower()
+        if 'navy' in thread_lower or 'black' in thread_lower or 'negro' in thread_lower:
+            return 'Black Bobbin'
+        else:
+            return 'White Bobbin'
+    
+    df['Bobbin_Color'] = df['Thread Color'].apply(get_bobbin_color)
+    bobbin_counts = df.groupby('Bobbin_Color')['Quantity_Int'].sum()
+    
+    # Thread colors by bobbin
+    black_bobbin_threads = df[df['Bobbin_Color'] == 'Black Bobbin'].groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
+    white_bobbin_threads = df[df['Bobbin_Color'] == 'White Bobbin'].groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
+    
     # --------------------------------------
     # Display Summary in Streamlit
     # --------------------------------------
@@ -224,6 +240,30 @@ if uploaded:
         st.subheader("🧵 Thread Color Breakdown")
         for color, count in thread_color_counts.items():
             st.write(f"**{color}:** {count}")
+    
+    # Bobbin Color Breakdown
+    st.write("---")
+    st.subheader("🎯 Bobbin Color Setup")
+    
+    col_bobbin1, col_bobbin2 = st.columns(2)
+    
+    with col_bobbin1:
+        st.markdown("### ⚫ Black Bobbin")
+        st.metric("Total Items", bobbin_counts.get('Black Bobbin', 0))
+        if len(black_bobbin_threads) > 0:
+            for color, count in black_bobbin_threads.items():
+                st.write(f"• {color}: {count}")
+        else:
+            st.write("_No items_")
+    
+    with col_bobbin2:
+        st.markdown("### ⚪ White Bobbin")
+        st.metric("Total Items", bobbin_counts.get('White Bobbin', 0))
+        if len(white_bobbin_threads) > 0:
+            for color, count in white_bobbin_threads.items():
+                st.write(f"• {color}: {count}")
+        else:
+            st.write("_No items_")
 
     # --------------------------------------
     # Generate A4 Summary Report PDF
@@ -342,6 +382,60 @@ if uploaded:
             c.drawString(left + 0.3 * inch, y, f"{color}:")
             c.drawRightString(right - 0.3 * inch, y, str(count))
             y -= 0.22 * inch
+        
+        y -= 0.5 * inch
+        
+        # --- Bobbin Color Breakdown ---
+        if y < 4 * inch:  # Start new page if running out of space
+            c.showPage()
+            y = top
+        
+        c.setFont("Helvetica-Bold", 18)
+        c.drawString(left, y, "Bobbin Color Setup")
+        y -= 0.3 * inch
+        
+        c.setStrokeColor(colors.grey)
+        c.setLineWidth(1)
+        c.line(left, y, right, y)
+        y -= 0.3 * inch
+        
+        # Black Bobbin Section
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(left + 0.3 * inch, y, "⚫ Black Bobbin")
+        c.drawRightString(right - 0.3 * inch, y, f"Total: {summary_stats['black_bobbin_total']}")
+        y -= 0.25 * inch
+        
+        c.setFont("Helvetica", 13)
+        for color, count in summary_stats['black_bobbin_threads'].items():
+            if y < 1.5 * inch:
+                c.showPage()
+                y = top
+                c.setFont("Helvetica", 13)
+            c.drawString(left + 0.6 * inch, y, f"• {color}:")
+            c.drawRightString(right - 0.3 * inch, y, str(count))
+            y -= 0.2 * inch
+        
+        y -= 0.25 * inch
+        
+        # White Bobbin Section
+        if y < 2 * inch:
+            c.showPage()
+            y = top
+        
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(left + 0.3 * inch, y, "⚪ White Bobbin")
+        c.drawRightString(right - 0.3 * inch, y, f"Total: {summary_stats['white_bobbin_total']}")
+        y -= 0.25 * inch
+        
+        c.setFont("Helvetica", 13)
+        for color, count in summary_stats['white_bobbin_threads'].items():
+            if y < 1.5 * inch:
+                c.showPage()
+                y = top
+                c.setFont("Helvetica", 13)
+            c.drawString(left + 0.6 * inch, y, f"• {color}:")
+            c.drawRightString(right - 0.3 * inch, y, str(count))
+            y -= 0.2 * inch
         
         c.save()
         buf.seek(0)
@@ -573,7 +667,11 @@ if uploaded:
                 'gift_messages': gift_messages_needed,
                 'unique_colors': len(blanket_color_counts),
                 'blanket_colors': blanket_color_counts.to_dict(),
-                'thread_colors': thread_color_counts.to_dict()
+                'thread_colors': thread_color_counts.to_dict(),
+                'black_bobbin_total': int(bobbin_counts.get('Black Bobbin', 0)),
+                'white_bobbin_total': int(bobbin_counts.get('White Bobbin', 0)),
+                'black_bobbin_threads': black_bobbin_threads.to_dict() if len(black_bobbin_threads) > 0 else {},
+                'white_bobbin_threads': white_bobbin_threads.to_dict() if len(white_bobbin_threads) > 0 else {}
             }
             pdf_data = generate_summary_pdf(df, summary_stats)
             st.download_button(
