@@ -129,7 +129,7 @@ def upload_to_airtable(dataframe):
                         "records": [{
                             "fields": {
                                 "Order ID": [airtable_order_id],
-                                "Customization Name": item_row['Customization Name'],
+                                "Customization Name Placement": item_row['Customization Name'],
                                 "Quantity": int(item_row['Quantity']),
                                 "Blanket Color": item_row['Blanket Color'],
                                 "Thread Color": item_row['Thread Color'],
