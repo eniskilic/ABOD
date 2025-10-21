@@ -74,6 +74,24 @@ def get_bobbin_color(thread_color):
     else:
         return 'White Bobbin'
 
+def draw_checkbox(canvas_obj, x, y, size, is_checked):
+    """
+    Draw a checkbox at position (x, y) with given size.
+    If is_checked is True, draws a filled square.
+    If is_checked is False, draws an empty square.
+    """
+    canvas_obj.setStrokeColor(colors.black)
+    canvas_obj.setLineWidth(2)
+    
+    if is_checked:
+        # Draw filled square
+        canvas_obj.setFillColor(colors.black)
+        canvas_obj.rect(x, y, size, size, stroke=1, fill=1)
+    else:
+        # Draw empty square
+        canvas_obj.setFillColor(colors.white)
+        canvas_obj.rect(x, y, size, size, stroke=1, fill=0)
+
 # --------------------------------------
 # Airtable Functions
 # --------------------------------------
@@ -350,52 +368,58 @@ if uploaded:
     df['Bobbin_Color'] = df['Thread Color'].apply(get_bobbin_color)
     bobbin_counts = df.groupby('Bobbin_Color')['Quantity_Int'].sum()
     
-    black_bobbin_threads = df[df['Bobbin_Color'] == 'Black Bobbin'].groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
-    white_bobbin_threads = df[df['Bobbin_Color'] == 'White Bobbin'].groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
+    black_bobbin_df = df[df['Bobbin_Color'] == 'Black Bobbin']
+    white_bobbin_df = df[df['Bobbin_Color'] == 'White Bobbin']
+    
+    black_bobbin_threads = black_bobbin_df.groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
+    white_bobbin_threads = white_bobbin_df.groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
 
     # --------------------------------------
-    # Display Summary
+    # Statistics Cards Section
     # --------------------------------------
     st.write("---")
-    st.header("📊 End of Day Summary")
+    st.header("📊 Order Summary")
     
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("🧵 Total Blankets", total_blankets)
+        st.metric("Total Blankets", total_blankets)
     with col2:
-        st.metric("🧢 Total Beanies", total_beanies)
+        st.metric("Total Orders", total_orders)
     with col3:
-        st.metric("📦 Total Orders", total_orders)
+        st.metric("Gift Boxes", gift_boxes_needed)
     with col4:
-        st.metric("💌 Gift Messages", gift_messages_needed)
+        st.metric("Gift Messages", gift_messages_needed)
     
     col5, col6, col7, col8 = st.columns(4)
     
     with col5:
-        st.metric("🎁 Gift Boxes", gift_boxes_needed)
+        st.metric("Total Beanies", total_beanies)
     with col6:
         st.metric("Blanket Only", orders_blanket_only)
     with col7:
         st.metric("With Beanie", orders_with_beanie)
     with col8:
-        st.metric("Unique Blanket Colors", len(blanket_color_counts))
+        st.metric("Unique Colors", len(blanket_color_counts))
     
-    col_a, col_b = st.columns(2)
+    # Color Breakdown
+    st.write("---")
+    st.subheader("🎨 Color Breakdown")
+    col_left, col_right = st.columns(2)
     
-    with col_a:
-        st.subheader("🎨 Blanket Color Breakdown")
+    with col_left:
+        st.markdown("### Blanket Colors")
         for color, count in blanket_color_counts.items():
             st.write(f"**{color}:** {count}")
     
-    with col_b:
-        st.subheader("🧵 Thread Color Breakdown")
+    with col_right:
+        st.markdown("### Thread Colors")
         for color, count in thread_color_counts.items():
             st.write(f"**{color}:** {count}")
     
+    # Bobbin Setup Section
     st.write("---")
-    st.subheader("🎯 Bobbin Color Setup")
-    
+    st.subheader("🧵 Bobbin Color Setup")
     col_bobbin1, col_bobbin2 = st.columns(2)
     
     with col_bobbin1:
@@ -494,73 +518,80 @@ if uploaded:
 
             # Three ENLARGED framed boxes for Beanie, Gift Box, Gift Note
             frame_width = (right - left - 0.4 * inch) / 3
-            frame_height = 0.85 * inch  # Increased from 0.65 to 0.85
+            frame_height = 0.85 * inch
             frame_y = y - frame_height
             
             c.setLineWidth(2)
             
-            # Beanie frame
+            # ===== BEANIE FRAME =====
             beanie_x = left
             c.rect(beanie_x, frame_y, frame_width, frame_height, stroke=1, fill=0)
             
-            # Use filled box for YES, empty box for NO
-            checkbox = "■" if row['Include Beanie'] == "YES" else "☐"
-            c.setFont("Helvetica-Bold", 16)  # Increased from 12 to 16
-            text_x = beanie_x + frame_width / 2
-            text_y = frame_y + frame_height - 0.22 * inch
-            c.drawCentredString(text_x, text_y, checkbox)
+            # Draw checkbox for beanie (REVISED)
+            checkbox_size = 0.25 * inch
+            checkbox_x = beanie_x + (frame_width - checkbox_size) / 2
+            checkbox_y = frame_y + frame_height - 0.35 * inch
+            is_beanie_checked = (row['Include Beanie'] == "YES")
+            draw_checkbox(c, checkbox_x, checkbox_y, checkbox_size, is_beanie_checked)
             
-            text_y -= 0.22 * inch  # Increased spacing
-            c.setFont("Helvetica-Bold", 14)  # Increased from 11 to 14
+            # Label text
+            text_x = beanie_x + frame_width / 2
+            text_y = frame_y + frame_height - 0.53 * inch
+            c.setFont("Helvetica-Bold", 14)
             c.drawCentredString(text_x, text_y, "BEANIE")
             
-            text_y -= 0.2 * inch  # Increased spacing
+            # YES/NO text
+            text_y -= 0.2 * inch
             if row['Include Beanie'] == "YES":
-                c.setFont("Helvetica-BoldOblique", 14)  # Increased from 11 to 14
+                c.setFont("Helvetica-BoldOblique", 14)
             else:
-                c.setFont("Helvetica-Bold", 14)  # Increased from 11 to 14
+                c.setFont("Helvetica-Bold", 14)
             c.drawCentredString(text_x, text_y, row['Include Beanie'])
             
-            # Gift Box frame
+            # ===== GIFT BOX FRAME =====
             gift_box_x = beanie_x + frame_width + 0.2 * inch
             c.rect(gift_box_x, frame_y, frame_width, frame_height, stroke=1, fill=0)
             
-            checkbox = "■" if row['Gift Box'] == "YES" else "☐"
-            c.setFont("Helvetica-Bold", 16)  # Increased from 12 to 16
-            text_x = gift_box_x + frame_width / 2
-            text_y = frame_y + frame_height - 0.22 * inch
-            c.drawCentredString(text_x, text_y, checkbox)
+            # Draw checkbox for gift box (REVISED)
+            checkbox_x = gift_box_x + (frame_width - checkbox_size) / 2
+            is_gift_box_checked = (row['Gift Box'] == "YES")
+            draw_checkbox(c, checkbox_x, checkbox_y, checkbox_size, is_gift_box_checked)
             
-            text_y -= 0.22 * inch
-            c.setFont("Helvetica-Bold", 14)  # Increased from 11 to 14
+            # Label text
+            text_x = gift_box_x + frame_width / 2
+            text_y = frame_y + frame_height - 0.53 * inch
+            c.setFont("Helvetica-Bold", 14)
             c.drawCentredString(text_x, text_y, "GIFT BOX")
             
+            # YES/NO text
             text_y -= 0.2 * inch
             if row['Gift Box'] == "YES":
-                c.setFont("Helvetica-BoldOblique", 14)  # Increased from 11 to 14
+                c.setFont("Helvetica-BoldOblique", 14)
             else:
-                c.setFont("Helvetica-Bold", 14)  # Increased from 11 to 14
+                c.setFont("Helvetica-Bold", 14)
             c.drawCentredString(text_x, text_y, row['Gift Box'])
             
-            # Gift Note frame
+            # ===== GIFT NOTE FRAME =====
             gift_note_x = gift_box_x + frame_width + 0.2 * inch
             c.rect(gift_note_x, frame_y, frame_width, frame_height, stroke=1, fill=0)
             
-            checkbox = "■" if row['Gift Note'] == "YES" else "☐"
-            c.setFont("Helvetica-Bold", 16)  # Increased from 12 to 16
-            text_x = gift_note_x + frame_width / 2
-            text_y = frame_y + frame_height - 0.22 * inch
-            c.drawCentredString(text_x, text_y, checkbox)
+            # Draw checkbox for gift note (REVISED)
+            checkbox_x = gift_note_x + (frame_width - checkbox_size) / 2
+            is_gift_note_checked = (row['Gift Note'] == "YES")
+            draw_checkbox(c, checkbox_x, checkbox_y, checkbox_size, is_gift_note_checked)
             
-            text_y -= 0.22 * inch
-            c.setFont("Helvetica-Bold", 14)  # Increased from 11 to 14
+            # Label text
+            text_x = gift_note_x + frame_width / 2
+            text_y = frame_y + frame_height - 0.53 * inch
+            c.setFont("Helvetica-Bold", 14)
             c.drawCentredString(text_x, text_y, "GIFT NOTE")
             
+            # YES/NO text
             text_y -= 0.2 * inch
             if row['Gift Note'] == "YES":
-                c.setFont("Helvetica-BoldOblique", 14)  # Increased from 11 to 14
+                c.setFont("Helvetica-BoldOblique", 14)
             else:
-                c.setFont("Helvetica-Bold", 14)  # Increased from 11 to 14
+                c.setFont("Helvetica-Bold", 14)
             c.drawCentredString(text_x, text_y, row['Gift Note'])
 
             c.showPage()
@@ -574,49 +605,63 @@ if uploaded:
         page_size = landscape((4 * inch, 6 * inch))
         c = canvas.Canvas(buf, pagesize=page_size)
         W, H = page_size
-
-        gift_orders = dataframe[dataframe['Gift Message'] != ""]
-
-        if len(gift_orders) == 0:
-            c.setFont("Helvetica", 14)
-            c.drawCentredString(W / 2, H / 2, "No gift messages found in orders")
+        left = 0.3 * inch
+        right = W - 0.3 * inch
+        top = H - 0.3 * inch
+        
+        gift_df = dataframe[dataframe['Gift Message'] != ""]
+        
+        if len(gift_df) == 0:
+            c.setFont("Helvetica-Bold", 16)
+            c.drawCentredString(W / 2, H / 2, "No gift messages to print")
             c.showPage()
-        else:
-            for _, row in gift_orders.iterrows():
-                # Simple border frame
-                c.setStrokeColor(colors.black)
-                c.setLineWidth(3)
-                c.rect(0.4 * inch, 0.4 * inch, W - 0.8 * inch, H - 0.8 * inch, stroke=1, fill=0)
-
-                c.setFont("Times-BoldItalic", 18)
-                message = row['Gift Message']
-                
-                words = message.split()
-                lines = []
-                current_line = []
-                max_width = W - 1.2 * inch
+            c.save()
+            buf.seek(0)
+            return buf
+        
+        for _, row in gift_df.iterrows():
+            y = top
+            
+            c.setFont("Helvetica-Bold", 14)
+            c.drawString(left, y, f"Order: {row['Order ID']}")
+            y -= 0.25 * inch
+            
+            c.setFont("Helvetica", 12)
+            c.drawString(left, y, f"For: {row['Customization Name']}")
+            y -= 0.35 * inch
+            
+            c.setStrokeColor(colors.black)
+            c.setLineWidth(2)
+            c.line(left, y, right, y)
+            y -= 0.3 * inch
+            
+            c.setFont("Helvetica", 11)
+            message_lines = row['Gift Message'].split('\n')
+            
+            max_width = right - left - 0.2 * inch
+            
+            for line in message_lines:
+                words = line.split()
+                current_line = ""
                 
                 for word in words:
-                    test_line = ' '.join(current_line + [word])
-                    if c.stringWidth(test_line, "Times-BoldItalic", 18) < max_width:
-                        current_line.append(word)
+                    test_line = current_line + word + " "
+                    if c.stringWidth(test_line, "Helvetica", 11) < max_width:
+                        current_line = test_line
                     else:
                         if current_line:
-                            lines.append(' '.join(current_line))
-                        current_line = [word]
+                            c.drawString(left + 0.1 * inch, y, current_line.strip())
+                            y -= 0.18 * inch
+                        current_line = word + " "
                 
                 if current_line:
-                    lines.append(' '.join(current_line))
-
-                total_height = len(lines) * 0.3 * inch
-                y = (H + total_height) / 2
-
-                for line in lines:
-                    c.drawCentredString(W / 2, y, line)
-                    y -= 0.3 * inch
-
-                c.showPage()
-
+                    c.drawString(left + 0.1 * inch, y, current_line.strip())
+                    y -= 0.18 * inch
+                
+                y -= 0.05 * inch
+            
+            c.showPage()
+        
         c.save()
         buf.seek(0)
         return buf
