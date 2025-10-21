@@ -11,7 +11,7 @@ import requests
 # --------------------------------------
 # Airtable Configuration
 # --------------------------------------
-AIRTABLE_PAT = "pat3HPlu7bZzJep6t.2ea662c7b5e4f25f406969f987c5fdb9e15d5a2c6e933428934c8e5602ae7a68"
+AIRTABLE_PAT = "patD9n2LOJRthfGan.b420b57e48143665f27870484e882266bcfd184fa7c96067fbb1ef8c41424fae"
 BASE_ID = "appxoNC3r5NSsTP3U"
 ORDERS_TABLE = "Orders"
 LINE_ITEMS_TABLE = "Order Line Items"
@@ -128,6 +128,7 @@ def upload_to_airtable(dataframe):
                     line_item_payload = {
                         "records": [{
                             "fields": {
+                                "Buyer Name": item_row['Buyer Name'],
                                 "Customization Name": item_row['Customization Name'],
                                 "Order ID": [airtable_order_id],
                                 "Quantity": int(item_row['Quantity']),
