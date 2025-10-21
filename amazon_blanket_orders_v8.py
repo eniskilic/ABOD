@@ -80,17 +80,21 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
     If is_checked is True, draws a filled square.
     If is_checked is False, draws an empty square.
     """
-    canvas_obj.setStrokeColor(colors.black)
-    canvas_obj.setLineWidth(2)
+    canvas_obj.saveState()  # Save current state
     
     if is_checked:
-        # Draw filled square
+        # Draw filled (solid black) square  
+        canvas_obj.setStrokeColor(colors.black)
         canvas_obj.setFillColor(colors.black)
+        canvas_obj.setLineWidth(2)
         canvas_obj.rect(x, y, size, size, stroke=1, fill=1)
     else:
-        # Draw empty square
-        canvas_obj.setFillColor(colors.white)
+        # Draw empty square (outline only)
+        canvas_obj.setStrokeColor(colors.black)
+        canvas_obj.setLineWidth(2)
         canvas_obj.rect(x, y, size, size, stroke=1, fill=0)
+    
+    canvas_obj.restoreState()  # Restore previous state
 
 # --------------------------------------
 # Airtable Functions
