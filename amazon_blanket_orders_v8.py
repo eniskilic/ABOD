@@ -77,14 +77,75 @@ def get_bobbin_color(thread_color):
 # --------------------------------------
 # Airtable Functions
 # --------------------------------------
-def upload_to_airtable(dataframe):
-    """Upload parsed orders to Airtable"""
+def get_existing_order_ids():
+    """Fetch all existing Order IDs from Airtable"""
     headers = {
         "Authorization": f"Bearer {AIRTABLE_PAT}",
         "Content-Type": "application/json"
     }
     
+    existing_orders = set()
+    offset = None
+    
+    try:
+        while True:
+            url = f"https://api.airtable.com/v0/{BASE_ID}/{ORDERS_TABLE}"
+            params = {"fields[]": "Order ID"}
+            
+            if offset:
+                params["offset"] = offset
+            
+            response = requests.get(url, headers=headers, params=params)
+            
+            if response.status_code == 200:
+                data = response.json()
+                records = data.get("records", [])
+                
+                for record in records:
+                    order_id = record.get("fields", {}).get("Order ID")
+                    if order_id:
+                        existing_orders.add(order_id)
+                
+                offset = data.get("offset")
+                if not offset:
+                    break
+            else:
+                st.warning(f"Could not fetch existing orders: {response.text}")
+                break
+                
+    except Exception as e:
+        st.warning(f"Error checking for duplicates: {str(e)}")
+    
+    return existing_orders
+
+def upload_to_airtable(dataframe):
+    """Upload parsed orders to Airtable with duplicate detection"""
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_PAT}",
+        "Content-Type": "application/json"
+    }
+    
+    # Check for existing orders
+    st.info("🔍 Checking for duplicate orders...")
+    existing_order_ids = get_existing_order_ids()
+    
     unique_orders = dataframe[['Order ID', 'Order Date', 'Buyer Name']].drop_duplicates(subset=['Order ID'])
+    
+    # Separate new and duplicate orders
+    new_orders = unique_orders[~unique_orders['Order ID'].isin(existing_order_ids)]
+    duplicate_orders = unique_orders[unique_orders['Order ID'].isin(existing_order_ids)]
+    
+    if len(duplicate_orders) > 0:
+        st.warning(f"⚠️ Found {len(duplicate_orders)} duplicate order(s) that already exist in Airtable")
+        with st.expander("View Duplicate Orders (will be skipped)"):
+            for _, dup in duplicate_orders.iterrows():
+                st.write(f"• {dup['Order ID']} - {dup['Buyer Name']}")
+    
+    if len(new_orders) == 0:
+        st.info("ℹ️ All orders already exist in Airtable. Nothing to upload.")
+        return 0, 0, []
+    
+    st.success(f"✅ Found {len(new_orders)} new order(s) to upload")
     
     orders_created = 0
     line_items_created = 0
@@ -93,9 +154,9 @@ def upload_to_airtable(dataframe):
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    total_orders = len(unique_orders)
+    total_orders = len(new_orders)
     
-    for idx, (_, order_row) in enumerate(unique_orders.iterrows()):
+    for idx, (_, order_row) in enumerate(new_orders.iterrows()):
         order_id = order_row['Order ID']
         
         try:
@@ -177,6 +238,7 @@ st.write("""
 ### 🪡 Features
 - **Parse Amazon PDFs** and generate manufacturing labels
 - **Upload to Airtable** for order tracking & team management
+- **Duplicate detection** prevents re-uploading same orders
 - **Two-column layout** with smart text wrapping
 - **End-of-day summary** with accurate order counts
 - **Bobbin color grouping** for embroidery setup
@@ -360,7 +422,7 @@ if uploaded:
     st.write("---")
     st.header("☁️ Upload to Airtable")
     
-    st.info("📤 Click below to upload these orders to your Airtable base for tracking and management.")
+    st.info("📤 Click below to upload these orders to your Airtable base. Duplicate orders will be automatically skipped.")
     
     if st.button("🚀 Upload to Airtable", type="primary", use_container_width=True):
         with st.spinner("Uploading to Airtable..."):
