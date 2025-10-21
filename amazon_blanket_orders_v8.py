@@ -466,8 +466,12 @@ if uploaded:
                 
                 y_left -= 0.3 * inch
 
-            c.setFont("Helvetica-Bold", 14)
+            # Beanie with italic if YES
             checkbox = "☑" if row['Include Beanie'] == "YES" else "☐"
+            if row['Include Beanie'] == "YES":
+                c.setFont("Helvetica-BoldOblique", 14)
+            else:
+                c.setFont("Helvetica-Bold", 14)
             c.drawString(left, y_left, f"{checkbox} Beanie: {row['Include Beanie']}")
 
             y_right = y
@@ -475,12 +479,21 @@ if uploaded:
             c.drawString(middle_x + 0.2 * inch, y_right, "PACKAGING:")
             y_right -= 0.3 * inch
 
-            c.setFont("Helvetica-Bold", 14)
+            # Gift Box with italic if YES
             checkbox = "☑" if row['Gift Box'] == "YES" else "☐"
+            if row['Gift Box'] == "YES":
+                c.setFont("Helvetica-BoldOblique", 14)
+            else:
+                c.setFont("Helvetica-Bold", 14)
             c.drawString(middle_x + 0.2 * inch, y_right, f"{checkbox} Gift Box: {row['Gift Box']}")
             y_right -= 0.3 * inch
 
+            # Gift Note with italic if YES
             checkbox = "☑" if row['Gift Note'] == "YES" else "☐"
+            if row['Gift Note'] == "YES":
+                c.setFont("Helvetica-BoldOblique", 14)
+            else:
+                c.setFont("Helvetica-Bold", 14)
             c.drawString(middle_x + 0.2 * inch, y_right, f"{checkbox} Gift Note: {row['Gift Note']}")
 
             c.showPage()
