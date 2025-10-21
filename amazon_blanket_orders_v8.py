@@ -392,7 +392,6 @@ if uploaded:
         left = 0.3 * inch
         right = W - 0.3 * inch
         top = H - 0.3 * inch
-        middle_x = left + (right - left) * 0.60
 
         for _, row in dataframe.iterrows():
             y = top
@@ -406,95 +405,99 @@ if uploaded:
             c.drawRightString(right, y, f"Date: {row['Order Date']}")
             y -= 0.3 * inch
 
-            box_height = 0.65 * inch
+            # Color box frame
+            box_height = 0.7 * inch
             box_y = y - box_height
             c.setStrokeColor(colors.black)
             c.setLineWidth(2)
             c.rect(left, box_y, right - left, box_height, stroke=1, fill=0)
             
-            # BLANKET COLOR on top now
-            c.setFont("Helvetica-Bold", 15)
-            text_y = box_y + box_height - 0.22 * inch
+            # BLANKET COLOR - 16pt
+            c.setFont("Helvetica-Bold", 16)
+            text_y = box_y + box_height - 0.24 * inch
             c.drawString(left + 0.1 * inch, text_y, f"BLANKET COLOR: {row['Blanket Color']}")
             
-            # Add more space between them
-            text_y -= 0.32 * inch  # Increased from 0.28 to 0.32
+            # THREAD COLOR - 16pt
+            text_y -= 0.32 * inch
             c.setFont("Helvetica-Bold", 16)
             c.drawString(left + 0.1 * inch, text_y, f"THREAD COLOR: {row['Thread Color']}")
             
-            # Add more space after the box
-            y = box_y - 0.4 * inch  # Increased from 0.3 to 0.4
+            y = box_y - 0.3 * inch
 
-            c.setStrokeColor(colors.grey)
-            c.setLineWidth(1)
-            c.line(middle_x, y, middle_x, 0.3 * inch)
-
-            y_left = y
+            # Name section
             c.setFont("Helvetica-Bold", 15)
-            c.drawString(left, y_left, "PRODUCT:")
-            y_left -= 0.3 * inch
+            c.drawString(left, y, f"★ Name: {row['Customization Name']}")
+            y -= 0.35 * inch
 
-            c.setFont("Helvetica-Bold", 15)
-            name_text = f"★ Name: {row['Customization Name']}"
-            left_column_width = middle_x - left - 0.2 * inch
+            # Three framed boxes for Beanie, Gift Box, Gift Note
+            frame_width = (right - left - 0.4 * inch) / 3
+            frame_height = 0.65 * inch
+            frame_y = y - frame_height
             
-            if c.stringWidth(name_text, "Helvetica-Bold", 15) <= left_column_width:
-                c.drawString(left, y_left, name_text)
-                y_left -= 0.3 * inch
-            else:
-                c.drawString(left, y_left, "★ Name:")
-                y_left -= 0.25 * inch
-                name_only = row['Customization Name']
-                
-                words = name_only.split()
-                if len(words) > 1 and c.stringWidth(name_only, "Helvetica-Bold", 15) > left_column_width - 0.3 * inch:
-                    line1_words = []
-                    line2_words = []
-                    for word in words:
-                        test_line1 = ' '.join(line1_words + [word])
-                        if c.stringWidth(test_line1, "Helvetica-Bold", 15) <= left_column_width - 0.3 * inch:
-                            line1_words.append(word)
-                        else:
-                            line2_words.append(word)
-                    
-                    c.drawString(left + 0.3 * inch, y_left, ' '.join(line1_words))
-                    if line2_words:
-                        y_left -= 0.22 * inch
-                        c.drawString(left + 0.3 * inch, y_left, ' '.join(line2_words))
-                else:
-                    c.drawString(left + 0.3 * inch, y_left, name_only)
-                
-                y_left -= 0.3 * inch
-
-            # Beanie with italic if YES
+            c.setLineWidth(2)
+            
+            # Beanie frame
+            beanie_x = left
+            c.rect(beanie_x, frame_y, frame_width, frame_height, stroke=1, fill=0)
+            
+            c.setFont("Helvetica-Bold", 12)
             checkbox = "☑" if row['Include Beanie'] == "YES" else "☐"
+            text_x = beanie_x + frame_width / 2
+            text_y = frame_y + frame_height - 0.2 * inch
+            c.drawCentredString(text_x, text_y, checkbox)
+            
+            text_y -= 0.18 * inch
+            c.setFont("Helvetica-Bold", 11)
+            c.drawCentredString(text_x, text_y, "BEANIE")
+            
+            text_y -= 0.16 * inch
             if row['Include Beanie'] == "YES":
-                c.setFont("Helvetica-BoldOblique", 14)
+                c.setFont("Helvetica-BoldOblique", 11)
             else:
-                c.setFont("Helvetica-Bold", 14)
-            c.drawString(left, y_left, f"{checkbox} Beanie: {row['Include Beanie']}")
-
-            y_right = y
-            c.setFont("Helvetica-Bold", 15)
-            c.drawString(middle_x + 0.2 * inch, y_right, "PACKAGING:")
-            y_right -= 0.3 * inch
-
-            # Gift Box with italic if YES
+                c.setFont("Helvetica-Bold", 11)
+            c.drawCentredString(text_x, text_y, row['Include Beanie'])
+            
+            # Gift Box frame
+            gift_box_x = beanie_x + frame_width + 0.2 * inch
+            c.rect(gift_box_x, frame_y, frame_width, frame_height, stroke=1, fill=0)
+            
+            c.setFont("Helvetica-Bold", 12)
             checkbox = "☑" if row['Gift Box'] == "YES" else "☐"
+            text_x = gift_box_x + frame_width / 2
+            text_y = frame_y + frame_height - 0.2 * inch
+            c.drawCentredString(text_x, text_y, checkbox)
+            
+            text_y -= 0.18 * inch
+            c.setFont("Helvetica-Bold", 11)
+            c.drawCentredString(text_x, text_y, "GIFT BOX")
+            
+            text_y -= 0.16 * inch
             if row['Gift Box'] == "YES":
-                c.setFont("Helvetica-BoldOblique", 14)
+                c.setFont("Helvetica-BoldOblique", 11)
             else:
-                c.setFont("Helvetica-Bold", 14)
-            c.drawString(middle_x + 0.2 * inch, y_right, f"{checkbox} Gift Box: {row['Gift Box']}")
-            y_right -= 0.3 * inch
-
-            # Gift Note with italic if YES
+                c.setFont("Helvetica-Bold", 11)
+            c.drawCentredString(text_x, text_y, row['Gift Box'])
+            
+            # Gift Note frame
+            gift_note_x = gift_box_x + frame_width + 0.2 * inch
+            c.rect(gift_note_x, frame_y, frame_width, frame_height, stroke=1, fill=0)
+            
+            c.setFont("Helvetica-Bold", 12)
             checkbox = "☑" if row['Gift Note'] == "YES" else "☐"
+            text_x = gift_note_x + frame_width / 2
+            text_y = frame_y + frame_height - 0.2 * inch
+            c.drawCentredString(text_x, text_y, checkbox)
+            
+            text_y -= 0.18 * inch
+            c.setFont("Helvetica-Bold", 11)
+            c.drawCentredString(text_x, text_y, "GIFT NOTE")
+            
+            text_y -= 0.16 * inch
             if row['Gift Note'] == "YES":
-                c.setFont("Helvetica-BoldOblique", 14)
+                c.setFont("Helvetica-BoldOblique", 11)
             else:
-                c.setFont("Helvetica-Bold", 14)
-            c.drawString(middle_x + 0.2 * inch, y_right, f"{checkbox} Gift Note: {row['Gift Note']}")
+                c.setFont("Helvetica-Bold", 11)
+            c.drawCentredString(text_x, text_y, row['Gift Note'])
 
             c.showPage()
 
@@ -516,16 +519,12 @@ if uploaded:
             c.showPage()
         else:
             for _, row in gift_orders.iterrows():
-                c.setFillColor(colors.white)
-                c.rect(0, 0, W, H, fill=1, stroke=0)
-                
-                c.setStrokeColor(colors.HexColor("#FFB6C1"))
+                # Simple border frame
+                c.setStrokeColor(colors.black)
                 c.setLineWidth(3)
-                c.setDash([])
                 c.rect(0.4 * inch, 0.4 * inch, W - 0.8 * inch, H - 0.8 * inch, stroke=1, fill=0)
 
-                c.setFillColor(colors.HexColor("#4A4A4A"))
-                c.setFont("Times-BoldItalic", 18)  # Changed to Times-BoldItalic with larger size
+                c.setFont("Times-BoldItalic", 18)
                 message = row['Gift Message']
                 
                 words = message.split()
