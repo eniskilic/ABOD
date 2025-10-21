@@ -412,14 +412,18 @@ if uploaded:
             c.setLineWidth(2)
             c.rect(left, box_y, right - left, box_height, stroke=1, fill=0)
             
-            c.setFont("Helvetica-Bold", 16)
+            # BLANKET COLOR on top now
+            c.setFont("Helvetica-Bold", 15)
             text_y = box_y + box_height - 0.22 * inch
+            c.drawString(left + 0.1 * inch, text_y, f"BLANKET COLOR: {row['Blanket Color']}")
+            
+            # Add more space between them
+            text_y -= 0.32 * inch  # Increased from 0.28 to 0.32
+            c.setFont("Helvetica-Bold", 16)
             c.drawString(left + 0.1 * inch, text_y, f"THREAD COLOR: {row['Thread Color']}")
             
-            text_y -= 0.28 * inch
-            c.setFont("Helvetica-Bold", 15)
-            c.drawString(left + 0.1 * inch, text_y, f"BLANKET COLOR: {row['Blanket Color']}")
-            y = box_y - 0.3 * inch
+            # Add more space after the box
+            y = box_y - 0.4 * inch  # Increased from 0.3 to 0.4
 
             c.setStrokeColor(colors.grey)
             c.setLineWidth(1)
@@ -758,4 +762,3 @@ if uploaded:
                 mime="application/pdf",
                 use_container_width=True
             )
-
