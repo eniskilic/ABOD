@@ -525,7 +525,7 @@ if uploaded:
                 c.rect(0.4 * inch, 0.4 * inch, W - 0.8 * inch, H - 0.8 * inch, stroke=1, fill=0)
 
                 c.setFillColor(colors.HexColor("#4A4A4A"))
-                c.setFont("Helvetica", 16)
+                c.setFont("Times-BoldItalic", 18)  # Changed to Times-BoldItalic with larger size
                 message = row['Gift Message']
                 
                 words = message.split()
@@ -535,7 +535,7 @@ if uploaded:
                 
                 for word in words:
                     test_line = ' '.join(current_line + [word])
-                    if c.stringWidth(test_line, "Helvetica", 16) < max_width:
+                    if c.stringWidth(test_line, "Times-BoldItalic", 18) < max_width:
                         current_line.append(word)
                     else:
                         if current_line:
@@ -545,12 +545,12 @@ if uploaded:
                 if current_line:
                     lines.append(' '.join(current_line))
 
-                total_height = len(lines) * 0.28 * inch
+                total_height = len(lines) * 0.3 * inch
                 y = (H + total_height) / 2
 
                 for line in lines:
                     c.drawCentredString(W / 2, y, line)
-                    y -= 0.28 * inch
+                    y -= 0.3 * inch
 
                 c.showPage()
 
