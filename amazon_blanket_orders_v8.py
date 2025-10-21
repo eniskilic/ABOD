@@ -125,23 +125,24 @@ def upload_to_airtable(dataframe):
                 order_items = dataframe[dataframe['Order ID'] == order_id]
                 
                 for _, item_row in order_items.iterrows():
-                    line_item_payload = {
-                        "records": [{
-                            "fields": {
-                                "Customization Name": item_row['Customization Name'],
-                                "Order ID": [airtable_order_id],
-                                "Quantity": int(item_row['Quantity']),
-                                "Blanket Color": item_row['Blanket Color'],
-                                "Thread Color": item_row['Thread Color'],
-                                "Include Beanie": item_row['Include Beanie'],
-                                "Gift Box": item_row['Gift Box'],
-                                "Gift Note": item_row['Gift Note'],
-                                "Gift Message": item_row['Gift Message'],
-                                "Bobbin Color": get_bobbin_color(item_row['Thread Color']),
-                                "Status": "Pending"
-                            }
-                        }]
-                    }
+    line_item_payload = {
+        "records": [{
+            "fields": {
+                "Buyer Name": order_row['Buyer Name'],  # FIRST FIELD
+                "Order ID": [airtable_order_id],
+                "Customization Name Placement": item_row['Customization Name'],
+                "Quantity": int(item_row['Quantity']),
+                "Blanket Color": item_row['Blanket Color'],
+                "Thread Color": item_row['Thread Color'],
+                "Include Beanie": item_row['Include Beanie'],
+                "Gift Box": item_row['Gift Box'],
+                "Gift Note": item_row['Gift Note'],
+                "Gift Message": item_row['Gift Message'],
+                "Bobbin Color": get_bobbin_color(item_row['Thread Color']),
+                "Status": "Pending"
+            }
+        }]
+    }
                     
                     item_response = requests.post(
                         f"https://api.airtable.com/v0/{BASE_ID}/{LINE_ITEMS_TABLE}",
@@ -758,3 +759,4 @@ if uploaded:
                 mime="application/pdf",
                 use_container_width=True
             )
+
