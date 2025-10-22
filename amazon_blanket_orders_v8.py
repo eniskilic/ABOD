@@ -522,7 +522,7 @@ if uploaded:
 
             # Three ENLARGED framed boxes for Beanie, Gift Box, Gift Note
             frame_width = (right - left - 0.4 * inch) / 3
-            frame_height = 0.85 * inch
+            frame_height = 1.1 * inch  # Increased to fit YES/NO text comfortably
             frame_y = y - frame_height
             
             c.setLineWidth(2)
