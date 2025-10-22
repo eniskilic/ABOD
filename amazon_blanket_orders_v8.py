@@ -503,14 +503,14 @@ if uploaded:
             c.setLineWidth(2)
             c.rect(left, box_y, right - left, box_height, stroke=1, fill=0)
             
-            # BLANKET COLOR - 16pt
+            # BLANKET COLOR - 16pt Bold with ALL CAPS value
             c.setFont("Helvetica-Bold", 16)
             text_y = box_y + box_height - 0.24 * inch
-            c.drawString(left + 0.1 * inch, text_y, f"BLANKET COLOR: {row['Blanket Color']}")
+            c.drawString(left + 0.1 * inch, text_y, f"BLANKET COLOR: {row['Blanket Color'].upper()}")
             
-            # THREAD COLOR - 16pt
+            # THREAD COLOR - 16pt Bold Italic
             text_y -= 0.32 * inch
-            c.setFont("Helvetica-Bold", 16)
+            c.setFont("Helvetica-BoldOblique", 16)
             c.drawString(left + 0.1 * inch, text_y, f"THREAD COLOR: {row['Thread Color']}")
             
             y = box_y - 0.3 * inch
