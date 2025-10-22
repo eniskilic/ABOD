@@ -538,14 +538,14 @@ if uploaded:
             is_beanie_checked = (row['Include Beanie'] == "YES")
             draw_checkbox(c, checkbox_x, checkbox_y, checkbox_size, is_beanie_checked)
             
-            # Label text
+            # Label text (increased spacing)
             text_x = beanie_x + frame_width / 2
-            text_y = frame_y + frame_height - 0.53 * inch
+            text_y = frame_y + frame_height - 0.60 * inch  # Increased from 0.53
             c.setFont("Helvetica-Bold", 14)
             c.drawCentredString(text_x, text_y, "BEANIE")
             
-            # YES/NO text
-            text_y -= 0.2 * inch
+            # YES/NO text (increased spacing)
+            text_y -= 0.25 * inch  # Increased from 0.2
             if row['Include Beanie'] == "YES":
                 c.setFont("Helvetica-BoldOblique", 14)
             else:
@@ -561,14 +561,14 @@ if uploaded:
             is_gift_box_checked = (row['Gift Box'] == "YES")
             draw_checkbox(c, checkbox_x, checkbox_y, checkbox_size, is_gift_box_checked)
             
-            # Label text
+            # Label text (increased spacing)
             text_x = gift_box_x + frame_width / 2
-            text_y = frame_y + frame_height - 0.53 * inch
+            text_y = frame_y + frame_height - 0.60 * inch  # Increased from 0.53
             c.setFont("Helvetica-Bold", 14)
             c.drawCentredString(text_x, text_y, "GIFT BOX")
             
-            # YES/NO text
-            text_y -= 0.2 * inch
+            # YES/NO text (increased spacing)
+            text_y -= 0.25 * inch  # Increased from 0.2
             if row['Gift Box'] == "YES":
                 c.setFont("Helvetica-BoldOblique", 14)
             else:
@@ -584,14 +584,14 @@ if uploaded:
             is_gift_note_checked = (row['Gift Note'] == "YES")
             draw_checkbox(c, checkbox_x, checkbox_y, checkbox_size, is_gift_note_checked)
             
-            # Label text
+            # Label text (increased spacing)
             text_x = gift_note_x + frame_width / 2
-            text_y = frame_y + frame_height - 0.53 * inch
+            text_y = frame_y + frame_height - 0.60 * inch  # Increased from 0.53
             c.setFont("Helvetica-Bold", 14)
             c.drawCentredString(text_x, text_y, "GIFT NOTE")
             
-            # YES/NO text
-            text_y -= 0.2 * inch
+            # YES/NO text (increased spacing)
+            text_y -= 0.25 * inch  # Increased from 0.2
             if row['Gift Note'] == "YES":
                 c.setFont("Helvetica-BoldOblique", 14)
             else:
