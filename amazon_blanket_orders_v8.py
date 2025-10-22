@@ -609,63 +609,49 @@ if uploaded:
         page_size = landscape((4 * inch, 6 * inch))
         c = canvas.Canvas(buf, pagesize=page_size)
         W, H = page_size
-        left = 0.3 * inch
-        right = W - 0.3 * inch
-        top = H - 0.3 * inch
-        
-        gift_df = dataframe[dataframe['Gift Message'] != ""]
-        
-        if len(gift_df) == 0:
-            c.setFont("Helvetica-Bold", 16)
-            c.drawCentredString(W / 2, H / 2, "No gift messages to print")
+
+        gift_orders = dataframe[dataframe['Gift Message'] != ""]
+
+        if len(gift_orders) == 0:
+            c.setFont("Helvetica", 14)
+            c.drawCentredString(W / 2, H / 2, "No gift messages found in orders")
             c.showPage()
-            c.save()
-            buf.seek(0)
-            return buf
-        
-        for _, row in gift_df.iterrows():
-            y = top
-            
-            c.setFont("Helvetica-Bold", 14)
-            c.drawString(left, y, f"Order: {row['Order ID']}")
-            y -= 0.25 * inch
-            
-            c.setFont("Helvetica", 12)
-            c.drawString(left, y, f"For: {row['Customization Name']}")
-            y -= 0.35 * inch
-            
-            c.setStrokeColor(colors.black)
-            c.setLineWidth(2)
-            c.line(left, y, right, y)
-            y -= 0.3 * inch
-            
-            c.setFont("Helvetica", 11)
-            message_lines = row['Gift Message'].split('\n')
-            
-            max_width = right - left - 0.2 * inch
-            
-            for line in message_lines:
-                words = line.split()
-                current_line = ""
+        else:
+            for _, row in gift_orders.iterrows():
+                # Simple border frame
+                c.setStrokeColor(colors.black)
+                c.setLineWidth(3)
+                c.rect(0.4 * inch, 0.4 * inch, W - 0.8 * inch, H - 0.8 * inch, stroke=1, fill=0)
+
+                c.setFont("Times-BoldItalic", 18)
+                message = row['Gift Message']
+                
+                words = message.split()
+                lines = []
+                current_line = []
+                max_width = W - 1.2 * inch
                 
                 for word in words:
-                    test_line = current_line + word + " "
-                    if c.stringWidth(test_line, "Helvetica", 11) < max_width:
-                        current_line = test_line
+                    test_line = ' '.join(current_line + [word])
+                    if c.stringWidth(test_line, "Times-BoldItalic", 18) < max_width:
+                        current_line.append(word)
                     else:
                         if current_line:
-                            c.drawString(left + 0.1 * inch, y, current_line.strip())
-                            y -= 0.18 * inch
-                        current_line = word + " "
+                            lines.append(' '.join(current_line))
+                        current_line = [word]
                 
                 if current_line:
-                    c.drawString(left + 0.1 * inch, y, current_line.strip())
-                    y -= 0.18 * inch
-                
-                y -= 0.05 * inch
-            
-            c.showPage()
-        
+                    lines.append(' '.join(current_line))
+
+                total_height = len(lines) * 0.3 * inch
+                y = (H + total_height) / 2
+
+                for line in lines:
+                    c.drawCentredString(W / 2, y, line)
+                    y -= 0.3 * inch
+
+                c.showPage()
+
         c.save()
         buf.seek(0)
         return buf
