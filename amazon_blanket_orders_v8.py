@@ -7,6 +7,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import inch, landscape, portrait
 from reportlab.lib import colors
 import requests
+from pypdf import PdfReader, PdfWriter
 
 # --------------------------------------
 # Airtable Configuration
@@ -95,6 +96,70 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
         canvas_obj.rect(x, y, size, size, stroke=1, fill=0)
     
     canvas_obj.restoreState()  # Restore previous state
+
+# --------------------------------------
+# NEW: Label Merging Function
+# --------------------------------------
+def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pdf_bytes, order_dataframe):
+    """
+    Merge shipping labels with manufacturing labels.
+    Handles orders with multiple items (one shipping label, multiple manufacturing labels).
+    
+    Args:
+        shipping_pdf_bytes: BytesIO object containing shipping labels PDF
+        manufacturing_pdf_bytes: BytesIO object containing manufacturing labels PDF
+        order_dataframe: DataFrame with order information including Order IDs
+    
+    Returns:
+        BytesIO object containing merged PDF
+    """
+    try:
+        # Read both PDFs
+        shipping_pdf = PdfReader(shipping_pdf_bytes)
+        manufacturing_pdf = PdfReader(manufacturing_pdf_bytes)
+        
+        # Create mapping: shipping label index -> list of manufacturing label indices
+        # Group by Order ID to find orders with multiple items
+        order_groups = order_dataframe.groupby('Order ID').size().to_dict()
+        
+        shipping_to_mfg = {}
+        mfg_index = 0
+        shipping_index = 0
+        
+        # Build mapping based on order quantities
+        for order_id, item_count in order_groups.items():
+            shipping_to_mfg[shipping_index] = list(range(mfg_index, mfg_index + item_count))
+            mfg_index += item_count
+            shipping_index += 1
+        
+        # Create merged PDF
+        output_pdf = PdfWriter()
+        
+        total_shipping_labels = len(shipping_to_mfg)
+        
+        for ship_idx in range(total_shipping_labels):
+            if ship_idx >= len(shipping_pdf.pages):
+                break
+                
+            # Add shipping label
+            output_pdf.add_page(shipping_pdf.pages[ship_idx])
+            
+            # Add corresponding manufacturing label(s)
+            if ship_idx in shipping_to_mfg:
+                for mfg_idx in shipping_to_mfg[ship_idx]:
+                    if mfg_idx < len(manufacturing_pdf.pages):
+                        output_pdf.add_page(manufacturing_pdf.pages[mfg_idx])
+        
+        # Write to BytesIO
+        output_buffer = BytesIO()
+        output_pdf.write(output_buffer)
+        output_buffer.seek(0)
+        
+        return output_buffer, len(shipping_to_mfg), sum(len(v) for v in shipping_to_mfg.values())
+        
+    except Exception as e:
+        st.error(f"Error merging labels: {str(e)}")
+        return None, 0, 0
 
 # --------------------------------------
 # Airtable Functions
@@ -253,12 +318,13 @@ def upload_to_airtable(dataframe):
 # --------------------------------------
 # Streamlit Setup
 # --------------------------------------
-st.set_page_config(page_title="Amazon Blanket Orders – v9.0", layout="centered")
-st.title("🧵 Amazon Blanket Order Manager — v9.0")
+st.set_page_config(page_title="Amazon Blanket Orders – v10.0", layout="centered")
+st.title("🧵 Amazon Blanket Order Manager — v10.0")
 
 st.write("""
 ### 🪡 Features
 - **Parse Amazon PDFs** and generate manufacturing labels
+- **Merge shipping & manufacturing labels** for easy printing
 - **Upload to Airtable** for order tracking & team management
 - **Duplicate detection** prevents re-uploading same orders
 - **Two-column layout** with smart text wrapping
@@ -817,16 +883,21 @@ if uploaded:
         return buf
 
     # --------------------------------------
-    # Download Buttons
+    # Download Buttons & Label Merging
     # --------------------------------------
     st.write("---")
     st.subheader("📥 Generate Labels & Reports")
+    
+    # Store generated manufacturing labels for merging
+    if 'manufacturing_labels_buffer' not in st.session_state:
+        st.session_state.manufacturing_labels_buffer = None
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
         if st.button("📦 Manufacturing Labels", use_container_width=True):
             pdf_data = generate_manufacturing_labels(df)
+            st.session_state.manufacturing_labels_buffer = pdf_data
             st.download_button(
                 label="⬇️ Download Manufacturing Labels",
                 data=pdf_data,
@@ -873,3 +944,71 @@ if uploaded:
                 mime="application/pdf",
                 use_container_width=True
             )
+    
+    # --------------------------------------
+    # NEW: Label Merging Section
+    # --------------------------------------
+    st.write("---")
+    st.subheader("🔄 Merge Shipping & Manufacturing Labels")
+    
+    st.info("""
+    **📦 Merge your shipping labels with manufacturing labels for easy printing!**
+    
+    1. First, generate Manufacturing Labels above
+    2. Upload your shipping labels PDF (from Amazon/UPS)
+    3. Click merge to create a combined PDF with alternating labels
+    """)
+    
+    shipping_labels_upload = st.file_uploader(
+        "📤 Upload Shipping Labels PDF",
+        type=["pdf"],
+        key="shipping_labels",
+        help="Upload the shipping labels PDF from Amazon or your shipping carrier"
+    )
+    
+    if shipping_labels_upload and st.session_state.manufacturing_labels_buffer:
+        col_merge1, col_merge2 = st.columns([2, 1])
+        
+        with col_merge1:
+            if st.button("🔀 Merge Labels", type="primary", use_container_width=True):
+                with st.spinner("Merging shipping and manufacturing labels..."):
+                    # Reset buffer positions
+                    shipping_labels_upload.seek(0)
+                    st.session_state.manufacturing_labels_buffer.seek(0)
+                    
+                    merged_pdf, num_shipping, num_manufacturing = merge_shipping_and_manufacturing_labels(
+                        shipping_labels_upload,
+                        st.session_state.manufacturing_labels_buffer,
+                        df
+                    )
+                    
+                    if merged_pdf:
+                        st.success(f"✅ Merged {num_shipping} shipping labels with {num_manufacturing} manufacturing labels!")
+                        
+                        # Check for orders with multiple items
+                        multi_item_orders = df.groupby('Order ID').size()
+                        multi_item_orders = multi_item_orders[multi_item_orders > 1]
+                        
+                        if len(multi_item_orders) > 0:
+                            st.info(f"ℹ️ Found {len(multi_item_orders)} order(s) with multiple items:")
+                            for order_id, count in multi_item_orders.items():
+                                buyer = df[df['Order ID'] == order_id]['Buyer Name'].iloc[0]
+                                st.write(f"  • {buyer} ({order_id}): {count} blankets")
+                        
+                        st.download_button(
+                            label="⬇️ Download Merged Labels PDF",
+                            data=merged_pdf,
+                            file_name="Merged_Shipping_Manufacturing_Labels.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+        
+        with col_merge2:
+            st.metric("Total Orders", df['Order ID'].nunique())
+            st.metric("Total Items", len(df))
+    
+    elif shipping_labels_upload and not st.session_state.manufacturing_labels_buffer:
+        st.warning("⚠️ Please generate Manufacturing Labels first (click the button above)")
+    
+    elif not shipping_labels_upload and st.session_state.manufacturing_labels_buffer:
+        st.info("📤 Upload your shipping labels PDF to enable merging")
