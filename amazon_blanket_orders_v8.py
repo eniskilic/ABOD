@@ -98,7 +98,7 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
     canvas_obj.restoreState()  # Restore previous state
 
 # --------------------------------------
-# NEW: Label Merging Function
+# FIXED: Label Merging Function
 # --------------------------------------
 def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pdf_bytes, order_dataframe):
     """
@@ -118,19 +118,25 @@ def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pd
         shipping_pdf = PdfReader(shipping_pdf_bytes)
         manufacturing_pdf = PdfReader(manufacturing_pdf_bytes)
         
-        # Create mapping: shipping label index -> list of manufacturing label indices
-        # Group by Order ID to find orders with multiple items
-        order_groups = order_dataframe.groupby('Order ID').size().to_dict()
+        # CRITICAL FIX: Preserve the order of orders as they appear in the dataframe
+        # Get unique order IDs in the order they first appear
+        seen_orders = []
+        order_item_counts = []
         
+        for order_id in order_dataframe['Order ID']:
+            if order_id not in seen_orders:
+                seen_orders.append(order_id)
+                # Count how many items this order has
+                item_count = len(order_dataframe[order_dataframe['Order ID'] == order_id])
+                order_item_counts.append(item_count)
+        
+        # Build mapping: shipping label index -> list of manufacturing label indices
         shipping_to_mfg = {}
         mfg_index = 0
-        shipping_index = 0
         
-        # Build mapping based on order quantities
-        for order_id, item_count in order_groups.items():
+        for shipping_index, item_count in enumerate(order_item_counts):
             shipping_to_mfg[shipping_index] = list(range(mfg_index, mfg_index + item_count))
             mfg_index += item_count
-            shipping_index += 1
         
         # Create merged PDF
         output_pdf = PdfWriter()
@@ -318,13 +324,13 @@ def upload_to_airtable(dataframe):
 # --------------------------------------
 # Streamlit Setup
 # --------------------------------------
-st.set_page_config(page_title="Amazon Blanket Orders – v10.0", layout="centered")
-st.title("🧵 Amazon Blanket Order Manager — v10.0")
+st.set_page_config(page_title="Amazon Blanket Orders – v10.1", layout="centered")
+st.title("🧵 Amazon Blanket Order Manager — v10.1")
 
 st.write("""
 ### 🪡 Features
 - **Parse Amazon PDFs** and generate manufacturing labels
-- **Merge shipping & manufacturing labels** for easy printing
+- **Merge shipping & manufacturing labels** for easy printing (FIXED order preservation)
 - **Upload to Airtable** for order tracking & team management
 - **Duplicate detection** prevents re-uploading same orders
 - **Two-column layout** with smart text wrapping
@@ -946,7 +952,7 @@ if uploaded:
             )
     
     # --------------------------------------
-    # NEW: Label Merging Section
+    # FIXED: Label Merging Section
     # --------------------------------------
     st.write("---")
     st.subheader("🔄 Merge Shipping & Manufacturing Labels")
@@ -957,6 +963,8 @@ if uploaded:
     1. First, generate Manufacturing Labels above
     2. Upload your shipping labels PDF (from Amazon/UPS)
     3. Click merge to create a combined PDF with alternating labels
+    
+    **✨ Version 10.1 Fix:** Now correctly handles multi-item orders without mixing up label order!
     """)
     
     shipping_labels_upload = st.file_uploader(
