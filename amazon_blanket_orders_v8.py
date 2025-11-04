@@ -20,42 +20,72 @@ st.set_page_config(
 )
 
 # --------------------------------------
-# Custom CSS Styling
+# Dark Mode Custom CSS Styling
 # --------------------------------------
 st.markdown("""
 <style>
-    /* Main App Styling */
+    /* Dark Mode Base */
     .main {
-        background: #f5f7fa;
+        background: #0f1419;
+        color: #e4e6eb;
     }
     
-    /* Sidebar Styling */
+    .stApp {
+        background: #0f1419;
+    }
+    
+    /* Sidebar Dark Styling */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #2c3e50 0%, #34495e 100%);
+        background: #1a1f2e;
+        border-right: 1px solid #2d3748;
     }
     
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+        color: #e4e6eb;
+    }
+    
+    /* Sidebar Navigation Links */
+    .nav-link {
+        display: block;
+        padding: 12px 15px;
+        margin: 4px 0;
+        border-radius: 10px;
+        color: #a0aec0;
+        text-decoration: none;
+        transition: all 0.2s ease;
+        cursor: pointer;
+    }
+    
+    .nav-link:hover {
+        background: #2d3748;
+        color: #e4e6eb;
+        text-decoration: none;
+    }
+    
+    .nav-link.active {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
     }
     
-    /* Metric Cards */
+    /* Metric Cards Dark */
     [data-testid="stMetric"] {
-        background: white;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-        border-left: 4px solid #3498db;
+        background: linear-gradient(135deg, #1e2432 0%, #252d3d 100%);
+        border: 1px solid #2d3748;
+        padding: 25px 20px;
+        border-radius: 16px;
+        border-left: 3px solid #667eea;
     }
     
     [data-testid="stMetric"]:hover {
         transform: translateY(-3px);
-        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        box-shadow: 0 10px 30px rgba(102, 126, 234, 0.2);
         transition: all 0.3s ease;
+        border-color: #667eea;
     }
     
     [data-testid="stMetric"] label {
-        font-size: 0.9em !important;
-        color: #7f8c8d !important;
+        font-size: 0.85em !important;
+        color: #a0aec0 !important;
         font-weight: 600 !important;
         text-transform: uppercase;
         letter-spacing: 0.5px;
@@ -64,35 +94,32 @@ st.markdown("""
     [data-testid="stMetric"] [data-testid="stMetricValue"] {
         font-size: 2.5em !important;
         font-weight: 700 !important;
-        color: #2c3e50 !important;
+        color: #e4e6eb !important;
     }
     
-    /* Headers */
+    /* Headers Dark */
     h1 {
-        color: #2c3e50;
+        color: #e4e6eb;
         font-weight: 700;
-        padding-bottom: 10px;
-        border-bottom: 3px solid #3498db;
+        padding-bottom: 15px;
+        border-bottom: 3px solid #667eea;
         margin-bottom: 30px;
     }
     
     h2 {
-        color: #2c3e50;
+        color: #e4e6eb;
         font-weight: 600;
         margin-top: 40px;
         margin-bottom: 20px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
     }
     
     h3 {
-        color: #34495e;
+        color: #cbd5e0;
         font-weight: 600;
         margin-bottom: 15px;
     }
     
-    /* Buttons */
+    /* Buttons Dark */
     .stButton button {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
@@ -109,39 +136,78 @@ st.markdown("""
         box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
     }
     
-    /* File Uploader */
+    /* File Uploader Dark */
     [data-testid="stFileUploader"] {
-        background: white;
-        padding: 30px;
+        background: #1a1f2e;
+        padding: 40px;
         border-radius: 12px;
-        border: 2px dashed #3498db;
-        text-align: center;
+        border: 2px dashed #2d3748;
     }
     
     [data-testid="stFileUploader"]:hover {
-        border-color: #2980b9;
-        background: #f8f9fa;
+        border-color: #667eea;
+        background: #1e2432;
     }
     
-    /* Info boxes */
+    [data-testid="stFileUploader"] label {
+        color: #e4e6eb !important;
+    }
+    
+    [data-testid="stFileUploader"] section {
+        border-color: #2d3748 !important;
+    }
+    
+    /* Info boxes Dark */
     .stAlert {
+        background: linear-gradient(135deg, #667eea20, #764ba220) !important;
+        border: 1px solid #667eea40 !important;
         border-radius: 10px;
-        border-left: 4px solid #3498db;
+        border-left: 4px solid #667eea !important;
+        color: #cbd5e0 !important;
     }
     
-    /* Dataframe */
+    /* Success boxes */
+    [data-baseweb="notification"] {
+        background: #1a1f2e !important;
+        border: 1px solid #48bb78 !important;
+        color: #e4e6eb !important;
+    }
+    
+    /* Dataframe Dark */
     [data-testid="stDataFrame"] {
         border-radius: 12px;
         overflow: hidden;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
     }
     
-    /* Expander */
+    [data-testid="stDataFrame"] table {
+        background: #1a1f2e !important;
+        color: #e4e6eb !important;
+    }
+    
+    [data-testid="stDataFrame"] thead tr th {
+        background: #2d3748 !important;
+        color: #e4e6eb !important;
+    }
+    
+    [data-testid="stDataFrame"] tbody tr {
+        background: #1e2432 !important;
+        color: #cbd5e0 !important;
+    }
+    
+    [data-testid="stDataFrame"] tbody tr:hover {
+        background: #252d3d !important;
+    }
+    
+    /* Expander Dark */
     [data-testid="stExpander"] {
-        background: white;
+        background: #1a1f2e !important;
         border-radius: 10px;
-        border: 1px solid #e0e0e0;
+        border: 1px solid #2d3748 !important;
         margin-bottom: 10px;
+    }
+    
+    [data-testid="stExpander"] [data-testid="stMarkdownContainer"] {
+        color: #e4e6eb !important;
     }
     
     /* Progress bar */
@@ -151,51 +217,75 @@ st.markdown("""
     
     /* Download button */
     .stDownloadButton button {
-        background: #27ae60;
+        background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
         color: white;
         border: none;
-        border-radius: 8px;
+        border-radius: 10px;
         padding: 10px 20px;
         font-weight: 600;
         width: 100%;
     }
     
     .stDownloadButton button:hover {
-        background: #229954;
         transform: translateY(-1px);
+        box-shadow: 0 5px 15px rgba(72, 187, 120, 0.4);
     }
     
-    /* Custom card styling */
-    .metric-card {
-        background: white;
-        padding: 25px;
-        border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-        border-left: 4px solid #3498db;
-        margin-bottom: 20px;
+    /* Text color overrides */
+    p, span, div {
+        color: #cbd5e0;
     }
     
-    .bobbin-card {
-        background: white;
-        padding: 25px;
-        border-radius: 12px;
-        border: 2px solid #e0e0e0;
-        margin-bottom: 15px;
-    }
-    
-    .bobbin-card.black {
-        border-left: 5px solid #2c3e50;
-    }
-    
-    .bobbin-card.white {
-        border-left: 5px solid #95a5a6;
+    strong {
+        color: #e4e6eb;
     }
     
     /* Section divider */
     hr {
         border: none;
-        border-top: 2px solid #ecf0f1;
+        border-top: 1px solid #2d3748;
         margin: 40px 0;
+    }
+    
+    /* Spinner Dark */
+    .stSpinner > div {
+        border-top-color: #667eea !important;
+    }
+    
+    /* Input fields */
+    input, textarea, select {
+        background: #1a1f2e !important;
+        color: #e4e6eb !important;
+        border: 1px solid #2d3748 !important;
+    }
+    
+    /* Markdown text */
+    .stMarkdown {
+        color: #cbd5e0 !important;
+    }
+    
+    /* Status indicator */
+    .status-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: #2d3748;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.85em;
+    }
+    
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        background: #48bb78;
+        border-radius: 50%;
+        animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -490,7 +580,7 @@ def upload_to_airtable(dataframe):
     return orders_created, line_items_created, errors
 
 # --------------------------------------
-# PDF Generation Functions
+# PDF Generation Functions (same as before)
 # --------------------------------------
 def generate_manufacturing_labels(dataframe):
     buf = BytesIO()
@@ -539,7 +629,6 @@ def generate_manufacturing_labels(dataframe):
         
         c.setLineWidth(2)
         
-        # BEANIE
         beanie_x = left
         c.rect(beanie_x, frame_y, frame_width, frame_height, stroke=1, fill=0)
         
@@ -561,7 +650,6 @@ def generate_manufacturing_labels(dataframe):
             c.setFont("Helvetica-Bold", 14)
         c.drawCentredString(text_x, text_y, row['Include Beanie'])
         
-        # GIFT BOX
         gift_box_x = beanie_x + frame_width + 0.2 * inch
         c.rect(gift_box_x, frame_y, frame_width, frame_height, stroke=1, fill=0)
         
@@ -581,7 +669,6 @@ def generate_manufacturing_labels(dataframe):
             c.setFont("Helvetica-Bold", 14)
         c.drawCentredString(text_x, text_y, row['Gift Box'])
         
-        # GIFT NOTE
         gift_note_x = gift_box_x + frame_width + 0.2 * inch
         c.rect(gift_note_x, frame_y, frame_width, frame_height, stroke=1, fill=0)
         
@@ -819,19 +906,23 @@ def generate_summary_pdf(dataframe, summary_stats):
     return buf
 
 # --------------------------------------
-# SIDEBAR
+# SIDEBAR WITH FUNCTIONAL NAVIGATION
 # --------------------------------------
 with st.sidebar:
     st.markdown("# 🧵 Blanket Manager")
-    st.markdown("### Version 10.1")
+    st.markdown("### Version 10.1 Dark")
     st.markdown("---")
     
-    st.markdown("#### 📋 Navigation")
-    st.markdown("• Dashboard (current)")
-    st.markdown("• Manufacturing")
-    st.markdown("• Label Merge")
-    st.markdown("• Airtable Sync")
-    st.markdown("• Reports")
+    st.markdown("#### 📋 Quick Navigation")
+    
+    # Functional navigation links with anchor tags
+    st.markdown('<a href="#upload-order" class="nav-link">📄 Upload Order</a>', unsafe_allow_html=True)
+    st.markdown('<a href="#dashboard" class="nav-link">📊 Dashboard</a>', unsafe_allow_html=True)
+    st.markdown('<a href="#color-analytics" class="nav-link">🎨 Color Analytics</a>', unsafe_allow_html=True)
+    st.markdown('<a href="#bobbin-setup" class="nav-link">🧵 Bobbin Setup</a>', unsafe_allow_html=True)
+    st.markdown('<a href="#generate-labels" class="nav-link">📥 Generate Labels</a>', unsafe_allow_html=True)
+    st.markdown('<a href="#label-merge" class="nav-link">🔄 Label Merge</a>', unsafe_allow_html=True)
+    st.markdown('<a href="#airtable-sync" class="nav-link">☁️ Airtable Sync</a>', unsafe_allow_html=True)
     
     st.markdown("---")
     
@@ -844,7 +935,7 @@ with st.sidebar:
     st.markdown("✓ Duplicate Detection")
     
     st.markdown("---")
-    st.markdown("**Status:** 🟢 System Ready")
+    st.markdown('<div class="status-indicator"><div class="status-dot"></div><span>System Ready</span></div>', unsafe_allow_html=True)
 
 # --------------------------------------
 # MAIN CONTENT
@@ -858,7 +949,8 @@ Parse Amazon PDFs • Generate labels • Merge shipments • Sync to Airtable
 
 st.markdown("---")
 
-# File Upload Section
+# File Upload Section with anchor
+st.markdown('<a id="upload-order"></a>', unsafe_allow_html=True)
 st.markdown("## 📄 Upload Order")
 uploaded = st.file_uploader(
     "Drop your Amazon packing slip PDF here",
@@ -980,9 +1072,10 @@ if uploaded:
     white_bobbin_threads = white_bobbin_df.groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
 
     # --------------------------------------
-    # Dashboard Metrics
+    # Dashboard Metrics with anchor
     # --------------------------------------
     st.markdown("---")
+    st.markdown('<a id="dashboard"></a>', unsafe_allow_html=True)
     st.markdown("## 📊 Order Dashboard")
     
     col1, col2, col3, col4, col5, col6 = st.columns(6)
@@ -1007,9 +1100,10 @@ if uploaded:
         st.metric("With Beanie", orders_with_beanie)
     
     # --------------------------------------
-    # Color Breakdown
+    # Color Breakdown with anchor
     # --------------------------------------
     st.markdown("---")
+    st.markdown('<a id="color-analytics"></a>', unsafe_allow_html=True)
     st.markdown("## 🎨 Color Analytics")
     
     col_left, col_right = st.columns(2)
@@ -1025,9 +1119,10 @@ if uploaded:
             st.markdown(f"**{color}:** {count}")
     
     # --------------------------------------
-    # Bobbin Setup Section
+    # Bobbin Setup Section with anchor
     # --------------------------------------
     st.markdown("---")
+    st.markdown('<a id="bobbin-setup"></a>', unsafe_allow_html=True)
     st.markdown("## 🧵 Bobbin Color Configuration")
     
     col_bobbin1, col_bobbin2 = st.columns(2)
@@ -1051,12 +1146,12 @@ if uploaded:
             st.markdown("_No items_")
 
     # --------------------------------------
-    # Generate Labels Section
+    # Generate Labels Section with anchor
     # --------------------------------------
     st.markdown("---")
+    st.markdown('<a id="generate-labels"></a>', unsafe_allow_html=True)
     st.markdown("## 📥 Generate & Download")
     
-    # Store manufacturing labels in session state
     if 'manufacturing_labels_buffer' not in st.session_state:
         st.session_state.manufacturing_labels_buffer = None
     
@@ -1120,9 +1215,10 @@ if uploaded:
             )
     
     # --------------------------------------
-    # Label Merging Section
+    # Label Merging Section with anchor
     # --------------------------------------
     st.markdown("---")
+    st.markdown('<a id="label-merge"></a>', unsafe_allow_html=True)
     st.markdown("## 🔄 Merge Shipping & Manufacturing Labels")
     
     st.info("""
@@ -1187,9 +1283,10 @@ if uploaded:
         st.info("📤 Upload your shipping labels PDF above to enable merging")
 
     # --------------------------------------
-    # Airtable Upload Section
+    # Airtable Upload Section with anchor
     # --------------------------------------
     st.markdown("---")
+    st.markdown('<a id="airtable-sync"></a>', unsafe_allow_html=True)
     st.markdown("## ☁️ Airtable Integration")
     
     st.info("📤 Upload these orders to your Airtable base. Duplicate orders will be automatically detected and skipped.")
@@ -1217,8 +1314,8 @@ if uploaded:
 # Footer
 st.markdown("---")
 st.markdown("""
-<div style='text-align: center; color: #7f8c8d; padding: 20px;'>
-    <p><strong>Amazon Blanket Order Manager v10.1</strong></p>
+<div style='text-align: center; color: #a0aec0; padding: 20px;'>
+    <p><strong>Amazon Blanket Order Manager v10.1 Dark</strong></p>
     <p>Professional order processing & label generation system</p>
 </div>
 """, unsafe_allow_html=True)
