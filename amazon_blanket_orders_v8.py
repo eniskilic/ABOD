@@ -373,59 +373,151 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
     canvas_obj.restoreState()
 
 # --------------------------------------
-# FIXED: Label Merging Function
+# NAME-BASED Label Merging Function
 # --------------------------------------
+def extract_name_from_shipping_label(page_text):
+    """Extract buyer name from shipping label text"""
+    # Try to find "Ship To:" pattern
+    ship_to_match = re.search(r"Ship\s+To:\s*\n?\s*([^\n]+)", page_text, re.IGNORECASE)
+    if ship_to_match:
+        full_line = ship_to_match.group(1).strip()
+        # Remove apartment/unit numbers and clean up
+        name = re.sub(r'\s+(apt|unit|ste|suite).*', '', full_line, flags=re.IGNORECASE)
+        # Remove any trailing numbers or special characters
+        name = re.sub(r'\s+\d+.*', '', name)
+        return name.strip()
+    return None
+
+def normalize_name_for_matching(name):
+    """Normalize names for better matching"""
+    if not name:
+        return ""
+    # Convert to lowercase for comparison
+    name = name.lower().strip()
+    # Remove common titles
+    name = re.sub(r'^(mr\.|mrs\.|ms\.|dr\.)\s+', '', name)
+    # Remove middle initials
+    name = re.sub(r'\s+[a-z]\.\s+', ' ', name)
+    # Remove extra spaces
+    name = re.sub(r'\s+', ' ', name)
+    return name
+
 def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pdf_bytes, order_dataframe):
     """
-    Merge shipping labels with manufacturing labels.
-    Handles orders with multiple items (one shipping label, multiple manufacturing labels).
+    Merge shipping labels with manufacturing labels using name-based matching.
+    Handles missing shipping labels by reporting unmatched items.
     """
     try:
+        import pdfplumber
+        from pypdf import PdfReader, PdfWriter
+        
+        # Read shipping labels and extract buyer names
+        shipping_names = []
         shipping_pdf = PdfReader(shipping_pdf_bytes)
+        
+        # Also parse with pdfplumber for text extraction
+        shipping_pdf_bytes.seek(0)
+        with pdfplumber.open(shipping_pdf_bytes) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text() or ""
+                name = extract_name_from_shipping_label(text)
+                if name:
+                    shipping_names.append(name)
+        
+        # Read manufacturing PDF
         manufacturing_pdf = PdfReader(manufacturing_pdf_bytes)
         
-        # CRITICAL FIX: Preserve the order of orders as they appear in the dataframe
-        seen_orders = []
-        order_item_counts = []
+        # Create mapping of normalized names to their indices in shipping labels
+        shipping_name_map = {}
+        for idx, name in enumerate(shipping_names):
+            normalized = normalize_name_for_matching(name)
+            if normalized:
+                shipping_name_map[normalized] = idx
         
-        for order_id in order_dataframe['Order ID']:
-            if order_id not in seen_orders:
-                seen_orders.append(order_id)
-                item_count = len(order_dataframe[order_dataframe['Order ID'] == order_id])
-                order_item_counts.append(item_count)
-        
-        # Build mapping: shipping label index -> list of manufacturing label indices
-        shipping_to_mfg = {}
-        mfg_index = 0
-        
-        for shipping_index, item_count in enumerate(order_item_counts):
-            shipping_to_mfg[shipping_index] = list(range(mfg_index, mfg_index + item_count))
-            mfg_index += item_count
+        # Group manufacturing labels by buyer name
+        mfg_label_groups = {}
+        for idx, (_, row) in enumerate(order_dataframe.iterrows()):
+            buyer = row['Buyer Name']
+            normalized = normalize_name_for_matching(buyer)
+            if normalized not in mfg_label_groups:
+                mfg_label_groups[normalized] = []
+            mfg_label_groups[normalized].append(idx)
         
         # Create merged PDF
         output_pdf = PdfWriter()
-        total_shipping_labels = len(shipping_to_mfg)
+        unmatched_pdf = PdfWriter()
         
-        for ship_idx in range(total_shipping_labels):
-            if ship_idx >= len(shipping_pdf.pages):
-                break
-                
-            output_pdf.add_page(shipping_pdf.pages[ship_idx])
+        matched_count = 0
+        unmatched_count = 0
+        matched_orders = []
+        unmatched_orders = []
+        
+        # Process each shipping label
+        for ship_idx, ship_name in enumerate(shipping_names):
+            normalized_ship = normalize_name_for_matching(ship_name)
             
-            if ship_idx in shipping_to_mfg:
-                for mfg_idx in shipping_to_mfg[ship_idx]:
-                    if mfg_idx < len(manufacturing_pdf.pages):
-                        output_pdf.add_page(manufacturing_pdf.pages[mfg_idx])
+            # Add shipping label to output
+            if ship_idx < len(shipping_pdf.pages):
+                output_pdf.add_page(shipping_pdf.pages[ship_idx])
+            
+            # Find matching manufacturing labels
+            matched = False
+            for mfg_norm_name, mfg_indices in list(mfg_label_groups.items()):
+                # Check if names match (fuzzy matching)
+                if normalized_ship in mfg_norm_name or mfg_norm_name in normalized_ship:
+                    matched = True
+                    matched_count += len(mfg_indices)
+                    # Add all manufacturing labels for this buyer
+                    for mfg_idx in mfg_indices:
+                        if mfg_idx < len(manufacturing_pdf.pages):
+                            output_pdf.add_page(manufacturing_pdf.pages[mfg_idx])
+                            row = order_dataframe.iloc[mfg_idx]
+                            matched_orders.append({
+                                'Order ID': row['Order ID'],
+                                'Buyer': row['Buyer Name'],
+                                'Item': row['Customization Name']
+                            })
+                    # Remove from groups once matched
+                    del mfg_label_groups[mfg_norm_name]
+                    break
         
+        # Handle unmatched manufacturing labels
+        for mfg_norm_name, mfg_indices in mfg_label_groups.items():
+            unmatched_count += len(mfg_indices)
+            for mfg_idx in mfg_indices:
+                if mfg_idx < len(manufacturing_pdf.pages):
+                    unmatched_pdf.add_page(manufacturing_pdf.pages[mfg_idx])
+                    row = order_dataframe.iloc[mfg_idx]
+                    unmatched_orders.append({
+                        'Order ID': row['Order ID'],
+                        'Buyer': row['Buyer Name'],
+                        'Item': row['Customization Name']
+                    })
+        
+        # Prepare output buffers
         output_buffer = BytesIO()
         output_pdf.write(output_buffer)
         output_buffer.seek(0)
         
-        return output_buffer, len(shipping_to_mfg), sum(len(v) for v in shipping_to_mfg.values())
+        unmatched_buffer = None
+        if unmatched_count > 0:
+            unmatched_buffer = BytesIO()
+            unmatched_pdf.write(unmatched_buffer)
+            unmatched_buffer.seek(0)
+        
+        return {
+            'merged_pdf': output_buffer,
+            'unmatched_pdf': unmatched_buffer,
+            'matched_count': matched_count,
+            'unmatched_count': unmatched_count,
+            'shipping_count': len(shipping_names),
+            'matched_orders': matched_orders,
+            'unmatched_orders': unmatched_orders
+        }
         
     except Exception as e:
         st.error(f"Error merging labels: {str(e)}")
-        return None, 0, 0
+        return None
 
 # --------------------------------------
 # Airtable Functions
@@ -910,7 +1002,7 @@ def generate_summary_pdf(dataframe, summary_stats):
 # --------------------------------------
 with st.sidebar:
     st.markdown("# 🧵 Blanket Manager")
-    st.markdown("### Version 10.1 Dark")
+    st.markdown("### Version 11.0 Fixed")
     st.markdown("---")
     
     st.markdown("#### 📋 Quick Navigation")
@@ -929,7 +1021,8 @@ with st.sidebar:
     st.markdown("#### ✨ Features")
     st.markdown("✓ PDF Parsing")
     st.markdown("✓ Label Generation")
-    st.markdown("✓ Order Merging")
+    st.markdown("✓ **Name-Based Merging**")
+    st.markdown("✓ **Missing Label Detection**")
     st.markdown("✓ Cloud Sync")
     st.markdown("✓ Spanish Translation")
     st.markdown("✓ Duplicate Detection")
@@ -944,7 +1037,7 @@ st.title("🧵 Amazon Blanket Order Manager")
 
 st.markdown("""
 **Professional order processing & label generation system**  
-Parse Amazon PDFs • Generate labels • Merge shipments • Sync to Airtable
+Parse Amazon PDFs • Generate labels • Smart name-based merging • Sync to Airtable
 """)
 
 st.markdown("---")
@@ -1215,19 +1308,23 @@ if uploaded:
             )
     
     # --------------------------------------
-    # Label Merging Section with anchor
+    # Label Merging Section with anchor - UPDATED
     # --------------------------------------
     st.markdown("---")
     st.markdown('<a id="label-merge"></a>', unsafe_allow_html=True)
     st.markdown("## 🔄 Merge Shipping & Manufacturing Labels")
     
     st.info("""
-    **Instructions for Label Merging:**
+    **🆕 Version 11.0 - Smart Name-Based Merging:**
+    - ✅ Automatically matches labels by buyer name
+    - ✅ Handles missing shipping labels gracefully
+    - ✅ Reports unmatched labels clearly
+    - ✅ Creates separate PDF for unmatched manufacturing labels
+    
+    **Instructions:**
     1. Generate Manufacturing Labels above (click the button)
     2. Upload your shipping labels PDF from Amazon/UPS
-    3. Click merge to create a combined PDF
-    
-    ✨ **Version 10.1:** Fixed label ordering for multi-item orders!
+    3. Click merge - system will match by name and report any missing labels
     """)
     
     shipping_labels_upload = st.file_uploader(
@@ -1242,35 +1339,65 @@ if uploaded:
         
         with col_merge1:
             if st.button("🔀 Merge Labels Now", type="primary", use_container_width=True):
-                with st.spinner("Merging shipping and manufacturing labels..."):
+                with st.spinner("Matching labels by buyer name and merging..."):
                     shipping_labels_upload.seek(0)
                     st.session_state.manufacturing_labels_buffer.seek(0)
                     
-                    merged_pdf, num_shipping, num_manufacturing = merge_shipping_and_manufacturing_labels(
+                    result = merge_shipping_and_manufacturing_labels(
                         shipping_labels_upload,
                         st.session_state.manufacturing_labels_buffer,
                         df
                     )
                     
-                    if merged_pdf:
-                        st.success(f"✅ Successfully merged {num_shipping} shipping labels with {num_manufacturing} manufacturing labels!")
+                    if result:
+                        st.success(f"✅ Merge Complete!")
                         
-                        multi_item_orders = df.groupby('Order ID').size()
-                        multi_item_orders = multi_item_orders[multi_item_orders > 1]
+                        # Display statistics
+                        col_stat1, col_stat2, col_stat3 = st.columns(3)
+                        with col_stat1:
+                            st.metric("Shipping Labels", result['shipping_count'])
+                        with col_stat2:
+                            st.metric("Matched Items", result['matched_count'], delta=f"{result['matched_count']}")
+                        with col_stat3:
+                            st.metric("Unmatched Items", result['unmatched_count'], 
+                                    delta=f"-{result['unmatched_count']}" if result['unmatched_count'] > 0 else "0")
                         
-                        if len(multi_item_orders) > 0:
-                            with st.expander(f"ℹ️ Found {len(multi_item_orders)} order(s) with multiple items"):
-                                for order_id, count in multi_item_orders.items():
-                                    buyer = df[df['Order ID'] == order_id]['Buyer Name'].iloc[0]
-                                    st.write(f"• {buyer} ({order_id}): {count} blankets")
+                        # Show matched orders
+                        if result['matched_count'] > 0:
+                            with st.expander(f"✅ Successfully Matched {result['matched_count']} Items"):
+                                for order in result['matched_orders'][:10]:  # Show first 10
+                                    st.write(f"• {order['Buyer']} - {order['Item']} (Order: {order['Order ID']})")
+                                if len(result['matched_orders']) > 10:
+                                    st.write(f"... and {len(result['matched_orders']) - 10} more")
                         
+                        # Show unmatched orders with warning
+                        if result['unmatched_count'] > 0:
+                            st.warning(f"⚠️ Found {result['unmatched_count']} manufacturing labels without matching shipping labels")
+                            with st.expander(f"❌ Unmatched Items (No Shipping Label Found)"):
+                                for order in result['unmatched_orders']:
+                                    st.write(f"• **{order['Buyer']}** - {order['Item']} (Order: {order['Order ID']})")
+                        
+                        # Download merged PDF
                         st.download_button(
                             label="⬇️ Download Merged Labels PDF",
-                            data=merged_pdf,
+                            data=result['merged_pdf'],
                             file_name="Merged_Shipping_Manufacturing_Labels.pdf",
                             mime="application/pdf",
-                            use_container_width=True
+                            use_container_width=True,
+                            type="primary"
                         )
+                        
+                        # Download unmatched labels if any
+                        if result['unmatched_pdf']:
+                            st.download_button(
+                                label=f"⬇️ Download {result['unmatched_count']} Unmatched Manufacturing Labels",
+                                data=result['unmatched_pdf'],
+                                file_name="Unmatched_Manufacturing_Labels.pdf",
+                                mime="application/pdf",
+                                use_container_width=True,
+                                type="secondary"
+                            )
+                            st.info("💡 Print these unmatched labels separately when their shipping labels become available")
         
         with col_merge2:
             st.metric("Total Orders", df['Order ID'].nunique())
@@ -1315,7 +1442,7 @@ if uploaded:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #a0aec0; padding: 20px;'>
-    <p><strong>Amazon Blanket Order Manager v10.1 Dark</strong></p>
-    <p>Professional order processing & label generation system</p>
+    <p><strong>Amazon Blanket Order Manager v11.0</strong></p>
+    <p>Smart name-based label merging with missing label detection</p>
 </div>
 """, unsafe_allow_html=True)
