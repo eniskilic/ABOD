@@ -400,19 +400,21 @@ def extract_order_ids_from_confirmation_pages(pdf_bytes):
                     # Extract order IDs from successful page
                     lines = text.split('\n')
                     for line in lines:
-                        line = line.strip()
+                        # Remove leading dash and spaces, then match Order ID pattern
+                        cleaned_line = line.strip().lstrip('- ').strip()
                         # Match Amazon order ID pattern: XXX-XXXXXXX-XXXXXXX
-                        if re.match(r'^\d{3}-\d{7}-\d{7}$', line):
-                            successful_orders.append(line)
+                        if re.match(r'^\d{3}-\d{7}-\d{7}$', cleaned_line):
+                            successful_orders.append(cleaned_line)
                 
                 elif "List of orders with error in label purchase" in text:
                     # Extract order IDs from error page
                     lines = text.split('\n')
                     for line in lines:
-                        line = line.strip()
+                        # Remove leading dash and spaces, then match Order ID pattern
+                        cleaned_line = line.strip().lstrip('- ').strip()
                         # Match Amazon order ID pattern
-                        if re.match(r'^\d{3}-\d{7}-\d{7}$', line):
-                            error_orders.append(line)
+                        if re.match(r'^\d{3}-\d{7}-\d{7}$', cleaned_line):
+                            error_orders.append(cleaned_line)
         
         pdf_bytes.seek(0)
         
