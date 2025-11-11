@@ -382,45 +382,74 @@ def extract_order_ids_from_confirmation_pages(pdf_bytes):
     """
     successful_orders = []
     error_orders = []
+    debug_messages = []
     
     try:
         pdf_bytes.seek(0)
         with pdfplumber.open(pdf_bytes) as pdf:
             total_pages = len(pdf.pages)
+            debug_messages.append(f"Total pages in PDF: {total_pages}")
             
-            # Check ALL pages for confirmation lists (not just last 5)
+            pages_with_success_header = 0
+            pages_with_error_header = 0
+            
+            # Check ALL pages for confirmation lists
             for page_num in range(total_pages):
                 page = pdf.pages[page_num]
                 text = page.extract_text() or ""
                 
                 # Check if this is a confirmation page
                 if "List of orders with successful label purchase" in text:
+                    pages_with_success_header += 1
+                    debug_messages.append(f"Found 'successful' header on page {page_num + 1}")
+                    
                     # Extract order IDs from successful page
                     lines = text.split('\n')
+                    count_before = len(successful_orders)
+                    
                     for line in lines:
                         # Remove leading dash and spaces, then match Order ID pattern
                         cleaned_line = line.strip().lstrip('- ').strip()
                         # Match Amazon order ID pattern: XXX-XXXXXXX-XXXXXXX
                         if re.match(r'^\d{3}-\d{7}-\d{7}$', cleaned_line):
                             successful_orders.append(cleaned_line)
+                    
+                    count_after = len(successful_orders)
+                    debug_messages.append(f"  Extracted {count_after - count_before} Order IDs from this page")
                 
                 elif "List of orders with error in label purchase" in text:
+                    pages_with_error_header += 1
+                    debug_messages.append(f"Found 'error' header on page {page_num + 1}")
+                    
                     # Extract order IDs from error page
                     lines = text.split('\n')
+                    count_before = len(error_orders)
+                    
                     for line in lines:
                         # Remove leading dash and spaces, then match Order ID pattern
                         cleaned_line = line.strip().lstrip('- ').strip()
                         # Match Amazon order ID pattern
                         if re.match(r'^\d{3}-\d{7}-\d{7}$', cleaned_line):
                             error_orders.append(cleaned_line)
+                    
+                    count_after = len(error_orders)
+                    debug_messages.append(f"  Extracted {count_after - count_before} Order IDs from this page")
         
         pdf_bytes.seek(0)
         
-        # Debug output
-        st.info(f"🔍 **Debug Info:** Found {len(successful_orders)} successful orders and {len(error_orders)} error orders in confirmation pages")
+        # Show debug info to user
+        debug_messages.append(f"\n**SUMMARY:**")
+        debug_messages.append(f"- Pages with 'successful' header: {pages_with_success_header}")
+        debug_messages.append(f"- Pages with 'error' header: {pages_with_error_header}")
+        debug_messages.append(f"- Total successful Order IDs extracted: {len(successful_orders)}")
+        debug_messages.append(f"- Total error Order IDs extracted: {len(error_orders)}")
+        
+        st.info("🔍 **Debug Information:**\n\n" + "\n".join(debug_messages))
         
     except Exception as e:
-        st.warning(f"Could not extract order confirmation lists: {str(e)}")
+        st.error(f"❌ Error extracting order confirmation lists: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
     
     return successful_orders, error_orders
 
