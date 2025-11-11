@@ -393,17 +393,27 @@ def extract_order_ids_from_confirmation_pages(pdf_bytes):
             pages_with_success_header = 0
             pages_with_error_header = 0
             
+            # Track which mode we're in (successful/error/none)
+            current_mode = None
+            
             # Check ALL pages for confirmation lists
             for page_num in range(total_pages):
                 page = pdf.pages[page_num]
                 text = page.extract_text() or ""
                 
-                # Check if this is a confirmation page
+                # Check for mode changes
                 if "List of orders with successful label purchase" in text:
+                    current_mode = "successful"
                     pages_with_success_header += 1
                     debug_messages.append(f"Found 'successful' header on page {page_num + 1}")
-                    
-                    # Extract order IDs from successful page
+                
+                elif "List of orders with error in label purchase" in text:
+                    current_mode = "error"
+                    pages_with_error_header += 1
+                    debug_messages.append(f"Found 'error' header on page {page_num + 1}")
+                
+                # If we're in a mode, extract Order IDs from this page
+                if current_mode == "successful":
                     lines = text.split('\n')
                     count_before = len(successful_orders)
                     
@@ -415,13 +425,10 @@ def extract_order_ids_from_confirmation_pages(pdf_bytes):
                             successful_orders.append(cleaned_line)
                     
                     count_after = len(successful_orders)
-                    debug_messages.append(f"  Extracted {count_after - count_before} Order IDs from this page")
+                    if count_after > count_before:
+                        debug_messages.append(f"  Page {page_num + 1}: Extracted {count_after - count_before} successful Order IDs")
                 
-                elif "List of orders with error in label purchase" in text:
-                    pages_with_error_header += 1
-                    debug_messages.append(f"Found 'error' header on page {page_num + 1}")
-                    
-                    # Extract order IDs from error page
+                elif current_mode == "error":
                     lines = text.split('\n')
                     count_before = len(error_orders)
                     
@@ -433,7 +440,8 @@ def extract_order_ids_from_confirmation_pages(pdf_bytes):
                             error_orders.append(cleaned_line)
                     
                     count_after = len(error_orders)
-                    debug_messages.append(f"  Extracted {count_after - count_before} Order IDs from this page")
+                    if count_after > count_before:
+                        debug_messages.append(f"  Page {page_num + 1}: Extracted {count_after - count_before} error Order IDs")
         
         pdf_bytes.seek(0)
         
