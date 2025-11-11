@@ -388,10 +388,8 @@ def extract_order_ids_from_confirmation_pages(pdf_bytes):
         with pdfplumber.open(pdf_bytes) as pdf:
             total_pages = len(pdf.pages)
             
-            # Check last 5 pages for confirmation lists
-            start_page = max(0, total_pages - 5)
-            
-            for page_num in range(start_page, total_pages):
+            # Check ALL pages for confirmation lists (not just last 5)
+            for page_num in range(total_pages):
                 page = pdf.pages[page_num]
                 text = page.extract_text() or ""
                 
@@ -417,6 +415,9 @@ def extract_order_ids_from_confirmation_pages(pdf_bytes):
                             error_orders.append(cleaned_line)
         
         pdf_bytes.seek(0)
+        
+        # Debug output
+        st.info(f"🔍 **Debug Info:** Found {len(successful_orders)} successful orders and {len(error_orders)} error orders in confirmation pages")
         
     except Exception as e:
         st.warning(f"Could not extract order confirmation lists: {str(e)}")
