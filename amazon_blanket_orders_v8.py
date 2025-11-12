@@ -84,15 +84,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --------------------------------------
-# Airtable Configuration
+# Airtable Configuration (set via st.secrets)
 # --------------------------------------
-# ✅ For production: move these to st.secrets
-# AIRTABLE_PAT = st.secrets["airtable"]["pat"]
-# BASE_ID = st.secrets["airtable"]["base_id"]
-AIRTABLE_PAT = "patD9n2LOJRthfGan.b420b57e48143665f27870484e882266bcfd184fa7c96067fbb1ef8c41424fae"
-BASE_ID = "appxoNC3r5NSsTP3U"
+AIRTABLE_PAT = st.secrets.get("airtable", {}).get("pat", "")
+BASE_ID = st.secrets.get("airtable", {}).get("base_id", "")
 ORDERS_TABLE = "Orders"
 LINE_ITEMS_TABLE = "Order Line Items"
+
+if not AIRTABLE_PAT or not BASE_ID:
+    st.warning("⚠️ Airtable credentials not found in st.secrets. Airtable features will show warnings.")
 
 # --------------------------------------
 # Color dictionary for Spanish translation (priority-aware)
@@ -126,6 +126,8 @@ COLOR_TRANSLATIONS = {
 # Order ID Normalization
 # --------------------------------------
 ORDER_ID_FLEX_RE = re.compile(r"[-–•\u2022]?\s*(\d{3})[-\s]?(\d{7})[-\s]?(\d{7})")
+ORDER_ID_RAW_RE  = re.compile(r"\b\d{3}[-\s]?\d{7}[-\s]?\d{7}\b")
+ERRORS_HDR_RE    = re.compile(r"orders?\s+with\s+error(s)?\s+in\s+label\s+purchas(e|es)", re.IGNORECASE)
 
 def normalize_order_id(s: str | None) -> str | None:
     """Return canonical ###-#######-####### or None if not recognized."""
@@ -153,11 +155,10 @@ def clean_text(s: str) -> str:
     return s.strip()
 
 def translate_thread_color(color):
-    """Adds Spanish translation with priority for specific matches (e.g., Navy Blue)."""
+    """Adds Spanish translation with priority for specific matches."""
     if not color:
         return color
     base = color.strip()
-    # priority match by longest key first
     for eng in sorted(COLOR_TRANSLATIONS.keys(), key=len, reverse=True):
         if eng.lower() in base.lower():
             return f"{base} ({COLOR_TRANSLATIONS[eng]})"
@@ -182,7 +183,7 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
     canvas_obj.restoreState()
 
 # --------------------------------------
-# Manifest helpers (shipping PDF)
+# Shipping PDF: text helpers
 # --------------------------------------
 def _page_text(reader: PdfReader, i: int) -> str:
     try:
@@ -190,37 +191,72 @@ def _page_text(reader: PdfReader, i: int) -> str:
     except Exception:
         return ""
 
-def find_manifest_start(shipping_reader: PdfReader) -> int:
-    """Index of the first page that contains 'Successful label purchases'."""
-    for i in range(len(shipping_reader.pages)):
-        txt = _page_text(shipping_reader, i)
-        if "Successful label purchases" in txt:
-            return i
-    return len(shipping_reader.pages)
-
-def extract_successful_order_ids(shipping_reader: PdfReader, manifest_start: int) -> list[str]:
-    """Ordered list of successful Order IDs from manifest pages."""
-    successful = []
-    in_success = False
-    for i in range(manifest_start, len(shipping_reader.pages)):
-        txt = _page_text(shipping_reader, i)
-        if "Successful label purchases" in txt:
-            in_success = True
-        if "Orders with error in label purchase" in txt:
-            in_success = False
-        if in_success:
-            # find all candidates and normalize
-            for m in ORDER_ID_FLEX_RE.finditer(txt):
-                oid = normalize_order_id(m.group(0))
-                if oid:
-                    successful.append(oid)
-    # de-dup while preserving order
-    seen, ordered = set(), []
-    for oid in successful:
+def _norm_ids_from_text(txt: str) -> list[str]:
+    """Extract and normalize all order IDs in text to ###-#######-#######."""
+    ids = []
+    for m in ORDER_ID_RAW_RE.finditer(txt):
+        raw = m.group(0)
+        digits = re.sub(r"[^\d]", "", raw)
+        if len(digits) == 17:
+            ids.append(f"{digits[:3]}-{digits[3:10]}-{digits[10:]}")
+    # Dedup, keep order
+    seen, out = set(), []
+    for oid in ids:
         if oid not in seen:
             seen.add(oid)
-            ordered.append(oid)
-    return ordered
+            out.append(oid)
+    return out
+
+def find_manifest_tail_start_by_density(shipping_reader: PdfReader, tail_pages: int = 12, density_threshold: int = 5) -> int:
+    """
+    Scan last `tail_pages` pages; return first index that looks like a manifest page
+    (>= density_threshold Order IDs). Returns len(pages) if none found.
+    """
+    n = len(shipping_reader.pages)
+    tail_start = max(0, n - tail_pages)
+    for i in range(tail_start, n):
+        if len(ORDER_ID_RAW_RE.findall(_page_text(shipping_reader, i))) >= density_threshold:
+            return i
+    return n
+
+def extract_success_and_error_ids(shipping_reader: PdfReader, start_page: int) -> tuple[list[str], list[str]]:
+    """
+    From start_page..end treat as a manifest block:
+      • If an error header appears mid-page, split: before=success, after=errors.
+      • After first error header, subsequent pages are error pages.
+      • If no error header ever seen, treat all IDs as success.
+    """
+    n = len(shipping_reader.pages)
+    success, errors = [], []
+    in_errors = False
+
+    for i in range(start_page, n):
+        txt = _page_text(shipping_reader, i)
+        m_err = ERRORS_HDR_RE.search(txt)
+
+        if in_errors:
+            errors += _norm_ids_from_text(txt)
+            continue
+
+        if m_err:
+            before = txt[:m_err.start()]
+            after  = txt[m_err.end():]
+            success += _norm_ids_from_text(before)
+            errors  += _norm_ids_from_text(after)
+            in_errors = True
+        else:
+            success += _norm_ids_from_text(txt)
+
+    # Dedup in order
+    def dedup_keep_order(lst):
+        seen, out = set(), []
+        for x in lst:
+            if x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+
+    return dedup_keep_order(success), dedup_keep_order(errors)
 
 # --------------------------------------
 # Manufacturing page index map (1 page per unit)
@@ -257,72 +293,68 @@ def build_mfg_index_map(df) -> dict[str, list[int]]:
 def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pdf_bytes, order_dataframe):
     """
     Shift-proof merge when shipping pages have no Order IDs:
-      • Find manifest start; pages [0:manifest_start) are shipping labels.
-      • Read 'Successful label purchases' -> ordered Order IDs.
+      • Find manifest block by ID density near the tail.
+      • Extract success/error Order IDs across all tail pages (title-agnostic).
       • Pair shipping page i with success_ids[i].
       • Attach exactly one mfg page per unit (sum of quantities).
-      • Skip orders not in the successful list to prevent drift.
+      • Skip orders not in the success list to prevent drift.
     """
     try:
         ship_reader = PdfReader(shipping_pdf_bytes)
-        mfg_reader = PdfReader(manufacturing_pdf_bytes)
+        mfg_reader  = PdfReader(manufacturing_pdf_bytes)
 
-        manifest_start = find_manifest_start(ship_reader)
-        label_page_count = manifest_start  # pages before manifest are shipping labels
-        success_ids = extract_successful_order_ids(ship_reader, manifest_start)
-
-        if label_page_count == 0:
-            st.error("No shipping label pages detected before the manifest.")
+        # 1) Find first manifest-like page near the end
+        manifest_start = find_manifest_tail_start_by_density(ship_reader, tail_pages=12, density_threshold=5)
+        if manifest_start >= len(ship_reader.pages):
+            st.error("No manifest pages detected near the end of the shipping PDF.")
             return None, 0, 0
+
+        # Pages before the manifest are the actual label pages
+        label_page_count = manifest_start
+
+        # 2) Extract success and error IDs across the tail block
+        success_ids, error_ids = extract_success_and_error_ids(ship_reader, manifest_start)
         if not success_ids:
-            st.error("Could not read 'Successful label purchases' list from the manifest.")
+            st.error("Could not read any order IDs from the manifest block.")
             return None, 0, 0
 
-        # Map of mfg pages by normalized Order ID
+        # Diagnostics
+        st.info(f"🧾 Manifest starts at page {manifest_start+1} of {len(ship_reader.pages)}")
+        st.info(f"✅ Successful orders: {len(success_ids)} | ⛔ Errors: {len(error_ids)}")
+
+        # 3) Build mfg page map (uses normalized Order IDs in df)
         mfg_map = build_mfg_index_map(order_dataframe)
 
-        # Handle count mismatches gracefully
-        min_pairs = min(label_page_count, len(success_ids))
-        extra_shipping = label_page_count - min_pairs
+        # 4) Pair by position: shipping page i ↔ success_ids[i]
+        min_pairs     = min(label_page_count, len(success_ids))
+        extra_ship    = label_page_count - min_pairs
         extra_success = len(success_ids) - min_pairs
-
-        if extra_shipping > 0:
-            st.warning(f"Found {extra_shipping} extra shipping page(s) without a corresponding successful order. "
-                       f"These will be included without manufacturing pages to avoid shifting.")
-        if extra_success > 0:
-            st.warning(f"Found {extra_success} successful order(s) with no shipping page. "
-                       f"These orders will be skipped in the merged PDF.")
 
         out = PdfWriter()
         merged_shipping, merged_mfg = 0, 0
 
-        # Pair 1:1 for overlap count
         for i in range(min_pairs):
             oid = success_ids[i]
-            # 1) Shipping page
-            out.add_page(ship_reader.pages[i])
-            merged_shipping += 1
-            # 2) Manufacturing pages for this OID (if any)
+            # add shipping page i
+            out.add_page(ship_reader.pages[i]); merged_shipping += 1
+            # attach manufacturing pages for this OID
             for mp in mfg_map.get(oid, []):
                 if mp < len(mfg_reader.pages):
-                    out.add_page(mfg_reader.pages[mp])
-                    merged_mfg += 1
+                    out.add_page(mfg_reader.pages[mp]); merged_mfg += 1
 
-        # Include leftover shipping pages alone (no mfg)
-        if extra_shipping > 0:
-            for i in range(min_pairs, label_page_count):
-                out.add_page(ship_reader.pages[i])
-                merged_shipping += 1
+        # include any extra shipping pages alone (avoid drift)
+        for i in range(min_pairs, min_pairs + max(0, extra_ship)):
+            out.add_page(ship_reader.pages[i]); merged_shipping += 1
 
-        # Report skipped orders (exist in df but not successful)
+        # warn about df orders skipped because they had no purchased labels
         df_orders = list(dict.fromkeys(order_dataframe['Order ID'].tolist()))
         skipped = [oid for oid in df_orders if oid not in success_ids]
         if skipped:
             st.warning("⛔ Skipped orders with no purchased label (prevented shifting):\n- " + "\n- ".join(skipped))
 
+        # finalize
         buf = BytesIO()
-        out.write(buf)
-        buf.seek(0)
+        out.write(buf); buf.seek(0)
         return buf, merged_shipping, merged_mfg
 
     except Exception as e:
@@ -333,10 +365,11 @@ def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pd
 # Airtable Functions
 # --------------------------------------
 def get_existing_order_ids():
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_PAT}",
-        "Content-Type": "application/json"
-    }
+    if not AIRTABLE_PAT or not BASE_ID:
+        st.warning("Airtable not configured. Skipping duplicate check.")
+        return set()
+
+    headers = {"Authorization": f"Bearer {AIRTABLE_PAT}", "Content-Type": "application/json"}
     existing_orders = set()
     offset = None
     try:
@@ -345,7 +378,7 @@ def get_existing_order_ids():
             params = {"fields[]": "Order ID"}
             if offset:
                 params["offset"] = offset
-            response = requests.get(url, headers=headers, params=params, timeout=15)
+            response = requests.get(url, headers=headers, params=params, timeout=20)
             if response.status_code == 200:
                 data = response.json()
                 for record in data.get("records", []):
@@ -363,21 +396,22 @@ def get_existing_order_ids():
     return existing_orders
 
 def upload_to_airtable(dataframe):
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_PAT}",
-        "Content-Type": "application/json"
-    }
+    if not AIRTABLE_PAT or not BASE_ID:
+        st.error("Airtable not configured in st.secrets; upload disabled.")
+        return 0, 0, ["Airtable not configured"]
+
+    headers = {"Authorization": f"Bearer {AIRTABLE_PAT}", "Content-Type": "application/json"}
+
     st.info("🔍 Checking for duplicate orders...")
     existing_order_ids = get_existing_order_ids()
 
     unique_orders = dataframe[['Order ID', 'Order Date', 'Buyer Name']].drop_duplicates(subset=['Order ID'])
-
     new_orders = unique_orders[~unique_orders['Order ID'].isin(existing_order_ids)]
     duplicate_orders = unique_orders[unique_orders['Order ID'].isin(existing_order_ids)]
 
     if len(duplicate_orders) > 0:
-        st.warning(f"⚠️ Found {len(duplicate_orders)} duplicate order(s) that already exist in Airtable")
-        with st.expander("View Duplicate Orders (will be skipped)"):
+        st.warning(f"⚠️ Found {len(duplicate_orders)} duplicate order(s) already in Airtable")
+        with st.expander("View Duplicate Orders (skipped)"):
             for _, dup in duplicate_orders.iterrows():
                 st.write(f"• {dup['Order ID']} - {dup['Buyer Name']}")
 
@@ -386,6 +420,7 @@ def upload_to_airtable(dataframe):
         return 0, 0, []
 
     st.success(f"✅ Found {len(new_orders)} new order(s) to upload")
+
     orders_created = 0
     line_items_created = 0
     errors = []
@@ -763,7 +798,7 @@ def generate_summary_pdf(dataframe, summary_stats):
 # --------------------------------------
 with st.sidebar:
     st.markdown("# 🧵 Blanket Manager")
-    st.markdown("### Version 10.1 Dark (Shift-Proof Merge)")
+    st.markdown("### Version 10.2 Dark (Shift-Proof Merge)")
     st.markdown("---")
     st.markdown("#### 📋 Quick Navigation")
     st.markdown('<a href="#upload-order" class="nav-link">📄 Upload Order</a>', unsafe_allow_html=True)
@@ -773,7 +808,6 @@ with st.sidebar:
     st.markdown('<a href="#generate-labels" class="nav-link">📥 Generate Labels</a>', unsafe_allow_html=True)
     st.markdown('<a href="#label-merge" class="nav-link">🔄 Label Merge</a>', unsafe_allow_html=True)
     st.markdown('<a href="#airtable-sync" class="nav-link">☁️ Airtable Sync</a>', unsafe_allow_html=True)
-    st.markmarkdown = st.markdown
     st.markdown("---")
     st.markdown('<div class="status-indicator"><div class="status-dot"></div><span>System Ready</span></div>', unsafe_allow_html=True)
 
@@ -874,12 +908,12 @@ if uploaded:
         st.stop()
 
     df = pd.DataFrame(records)
-    # Normalize defensively (already normalized above, but keep)
+    # Normalize defensively
     df["Order ID"] = df["Order ID"].apply(normalize_order_id)
     df = df[df["Order ID"].notna()].copy()
 
     df.index = df.index + 1
-    st.success(f"✅ Successfully parsed {len(df)} line items from {df['Order ID'].nunique()} orders")
+    st.success(f"✅ Parsed {len(df)} line items from {df['Order ID'].nunique()} orders")
 
     with st.expander("📊 View Order Data"):
         st.dataframe(df, use_container_width=True)
@@ -910,7 +944,7 @@ if uploaded:
     white_bobbin_threads = white_bobbin_df.groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
 
     # --------------------------------------
-    # Dashboard Metrics
+    # Dashboard
     # --------------------------------------
     st.markdown("---")
     st.markdown('<a id="dashboard"></a>', unsafe_allow_html=True)
@@ -929,7 +963,7 @@ if uploaded:
     with col8: st.metric("With Beanie", orders_with_beanie)
 
     # --------------------------------------
-    # Color Breakdown
+    # Color Analytics
     # --------------------------------------
     st.markdown("---")
     st.markdown('<a id="color-analytics"></a>', unsafe_allow_html=True)
@@ -1046,17 +1080,17 @@ if uploaded:
     st.markdown("## 🔄 Merge Shipping & Manufacturing Labels")
 
     st.info("""
-    **Shift-Proof Merge Instructions**
-    1. Generate Manufacturing Labels above (one page per unit).
-    2. Upload your shipping labels PDF (Amazon/UPS with manifest at the end).
-    3. We will pair *shipping page i* with *Successful label purchases[i]* and **skip** orders without labels.
+    **Shift-Proof Merge**
+    1) Generate Manufacturing Labels (one page per unit).
+    2) Upload the Shipping Labels PDF (with the manifest pages at the end).
+    3) We will pair *shipping page i* ↔ *success_ids[i]* and **skip** orders without purchased labels.
     """)
 
     shipping_labels_upload = st.file_uploader(
         "📤 Upload Shipping Labels PDF",
         type=["pdf"],
         key="shipping_labels",
-        help="Upload the shipping labels PDF from Amazon or your carrier (must include manifest)"
+        help="Upload the shipping labels PDF from Amazon or your carrier (should include the manifest pages at the end)"
     )
 
     if shipping_labels_upload and st.session_state.manufacturing_labels_buffer:
@@ -1096,12 +1130,12 @@ if uploaded:
     st.markdown('<a id="airtable-sync"></a>', unsafe_allow_html=True)
     st.markdown("## ☁️ Airtable Integration")
 
-    st.info("📤 Upload these orders to your Airtable base. Duplicate orders will be automatically detected and skipped.")
+    st.info("📤 Upload these orders to your Airtable base. Duplicate orders will be detected and skipped.")
     if st.button("🚀 Upload to Airtable", type="primary", use_container_width=True):
         with st.spinner("Uploading to Airtable..."):
             orders_created, line_items_created, errors = upload_to_airtable(df)
-        if errors:
-            st.error(f"⚠️ Upload completed with {len(errors)} errors")
+        if errors and any(errors):
+            st.error(f"⚠️ Upload completed with {len(errors)} error(s)")
             with st.expander("View Errors"):
                 for error in errors:
                     st.write(f"• {error}")
@@ -1110,13 +1144,13 @@ if uploaded:
         col_result1, col_result2 = st.columns(2)
         with col_result1: st.metric("Orders Created", orders_created)
         with col_result2: st.metric("Line Items Created", line_items_created)
-        st.info("🔗 Go to your Airtable base to view and manage orders!")
+        st.info("🔗 Check your Airtable base to view and manage orders.")
 
 # Footer
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #a0aec0; padding: 20px;'>
-    <p><strong>Amazon Blanket Order Manager v10.1 Dark — Shift-Proof Merge</strong></p>
+    <p><strong>Amazon Blanket Order Manager v10.2 — Shift-Proof Merge</strong></p>
     <p>Professional order processing & label generation system</p>
 </div>
 """, unsafe_allow_html=True)
