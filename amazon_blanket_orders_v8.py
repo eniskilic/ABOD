@@ -376,55 +376,82 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
 # CRITICAL FIX: Safe Label Merging with Validation
 # --------------------------------------
 
-def extract_order_ids_from_shipping_pdf(shipping_pdf_bytes):
+def parse_shipping_confirmation_pages(shipping_pdf_bytes):
     """
-    Extract Order IDs from shipping label PDF.
-    Amazon shipping labels contain Order IDs in format: XXX-XXXXXXX-XXXXXXX
+    Parse Amazon shipping label confirmation pages.
+
+    Amazon shipping label PDFs have:
+    - Pages 1-N: Individual shipping labels (NO Order IDs visible)
+    - Pages N+1 onward: Confirmation pages with:
+        * "List of orders with successful label purchase" + Order IDs
+        * "List of orders with error in label purchase" + Order IDs (if any failures)
 
     Returns:
-        list: List of (page_index, order_id) tuples
+        tuple: (successful_orders_list, failed_orders_list, num_label_pages)
     """
-    extracted_orders = []
+    successful_orders = []
+    failed_orders = []
     order_id_pattern = re.compile(r'\b(\d{3}-\d{7}-\d{7})\b')
 
     try:
-        # Use pdfplumber to extract text from each page
         with pdfplumber.open(shipping_pdf_bytes) as pdf:
+            all_text = ""
+
+            # Read all pages to find confirmation text
             for page_idx, page in enumerate(pdf.pages):
                 text = page.extract_text() or ""
+                all_text += text + "\n"
 
-                # Search for Order ID pattern
-                matches = order_id_pattern.findall(text)
+            # Look for successful orders section
+            success_match = re.search(
+                r'List of orders with successful label purchase\s*([\s\S]*?)(?=List of orders with error|$)',
+                all_text,
+                re.IGNORECASE
+            )
 
-                if matches:
-                    # Take the first match (should be the order ID for this label)
-                    order_id = matches[0]
-                    extracted_orders.append((page_idx, order_id))
-                else:
-                    # No Order ID found on this page
-                    extracted_orders.append((page_idx, None))
+            if success_match:
+                success_text = success_match.group(1)
+                successful_orders = order_id_pattern.findall(success_text)
 
-        return extracted_orders
+            # Look for failed orders section
+            failed_match = re.search(
+                r'List of orders with error in label purchase\s*([\s\S]*?)(?=\n\n|$)',
+                all_text,
+                re.IGNORECASE
+            )
+
+            if failed_match:
+                failed_text = failed_match.group(1)
+                failed_orders = order_id_pattern.findall(failed_text)
+
+            # Calculate number of label pages
+            # If we found successful orders, the confirmation page(s) are at the end
+            # Number of labels = number of successful orders
+            num_label_pages = len(successful_orders)
+
+            return successful_orders, failed_orders, num_label_pages
 
     except Exception as e:
-        st.error(f"Error extracting Order IDs from shipping labels: {str(e)}")
-        return []
+        st.error(f"Error parsing shipping label confirmation: {str(e)}")
+        return [], [], 0
 
 
 def validate_label_mapping(shipping_pdf_bytes, order_dataframe):
     """
     Validate that shipping labels match the orders in the dataframe.
+    Uses Amazon's confirmation page to determine which orders got labels.
 
     Returns:
         dict: Validation report with structure:
         {
             'is_valid': bool,
-            'shipping_labels': list of (page_idx, order_id),
+            'successful_orders': list of order_ids that got shipping labels,
+            'failed_orders': list of order_ids that failed to get labels,
             'expected_orders': list of order_ids from dataframe,
             'matched_orders': list of order_ids that have shipping labels,
             'missing_labels': list of order_ids without shipping labels,
             'extra_labels': list of shipping label order_ids not in dataframe,
-            'unreadable_labels': list of page indices where Order ID couldn't be extracted,
+            'num_label_pages': int,
             'mapping': dict mapping order_id -> (shipping_page_idx, mfg_page_indices),
             'warnings': list of warning messages,
             'errors': list of error messages
@@ -432,29 +459,40 @@ def validate_label_mapping(shipping_pdf_bytes, order_dataframe):
     """
     validation_report = {
         'is_valid': False,
-        'shipping_labels': [],
+        'successful_orders': [],
+        'failed_orders': [],
         'expected_orders': [],
         'matched_orders': [],
         'missing_labels': [],
         'extra_labels': [],
-        'unreadable_labels': [],
+        'num_label_pages': 0,
         'mapping': {},
         'warnings': [],
         'errors': []
     }
 
     try:
-        # Step 1: Extract Order IDs from shipping labels
-        shipping_labels = extract_order_ids_from_shipping_pdf(shipping_pdf_bytes)
-        validation_report['shipping_labels'] = shipping_labels
+        # Step 1: Parse confirmation page to get successful and failed orders
+        successful_orders, failed_orders, num_label_pages = parse_shipping_confirmation_pages(shipping_pdf_bytes)
 
-        # Track unreadable labels
-        for page_idx, order_id in shipping_labels:
-            if order_id is None:
-                validation_report['unreadable_labels'].append(page_idx)
-                validation_report['warnings'].append(
-                    f"⚠️ Shipping label page {page_idx + 1}: Could not extract Order ID"
-                )
+        if not successful_orders and not failed_orders:
+            validation_report['errors'].append(
+                "❌ Could not find confirmation page in shipping label PDF."
+            )
+            validation_report['errors'].append(
+                "💡 Expected to find text: 'List of orders with successful label purchase'"
+            )
+            validation_report['errors'].append(
+                "💡 Make sure you uploaded the complete PDF from Amazon that includes the confirmation page at the end."
+            )
+            validation_report['errors'].append(
+                "💡 The confirmation page shows which orders got labels and which failed."
+            )
+            return validation_report
+
+        validation_report['successful_orders'] = successful_orders
+        validation_report['failed_orders'] = failed_orders
+        validation_report['num_label_pages'] = num_label_pages
 
         # Step 2: Get expected order sequence from dataframe
         seen_orders = []
@@ -467,37 +505,40 @@ def validate_label_mapping(shipping_pdf_bytes, order_dataframe):
 
         validation_report['expected_orders'] = seen_orders
 
-        # Step 3: Create mapping of shipping labels to Order IDs
-        shipping_order_map = {}
-        for page_idx, order_id in shipping_labels:
-            if order_id:
-                shipping_order_map[order_id] = page_idx
-
-        # Step 4: Compare shipping labels with expected orders
+        # Step 3: Compare expected orders with successful/failed lists
         for order_id in seen_orders:
-            if order_id in shipping_order_map:
+            if order_id in successful_orders:
                 validation_report['matched_orders'].append(order_id)
+            elif order_id in failed_orders:
+                validation_report['missing_labels'].append(order_id)
+                validation_report['errors'].append(
+                    f"❌ Order {order_id}: Label purchase FAILED (Amazon error)"
+                )
             else:
                 validation_report['missing_labels'].append(order_id)
                 validation_report['errors'].append(
-                    f"❌ Order {order_id}: No shipping label found"
+                    f"❌ Order {order_id}: Not found in shipping label PDF"
                 )
 
         # Check for extra shipping labels not in dataframe
-        for order_id, page_idx in shipping_order_map.items():
+        for order_id in successful_orders:
             if order_id not in seen_orders:
                 validation_report['extra_labels'].append(order_id)
                 validation_report['warnings'].append(
-                    f"⚠️ Shipping label page {page_idx + 1} ({order_id}): Not found in manufacturing orders"
+                    f"⚠️ Order {order_id}: Has shipping label but not in manufacturing orders"
                 )
 
-        # Step 5: Build safe mapping for merge
-        # Only map orders that have matching shipping labels
+        # Step 4: Build safe mapping for merge
+        # Key insight: Shipping labels are in the SAME ORDER as successful_orders list
+        label_index = 0
         mfg_index = 0
+
         for expected_order_id in seen_orders:
-            if expected_order_id in shipping_order_map:
-                shipping_page = shipping_order_map[expected_order_id]
-                item_count = order_item_counts[expected_order_id]
+            item_count = order_item_counts[expected_order_id]
+
+            if expected_order_id in successful_orders:
+                # Find this order's position in the successful_orders list
+                shipping_page = successful_orders.index(expected_order_id)
                 mfg_pages = list(range(mfg_index, mfg_index + item_count))
 
                 validation_report['mapping'][expected_order_id] = {
@@ -506,13 +547,12 @@ def validate_label_mapping(shipping_pdf_bytes, order_dataframe):
                     'item_count': item_count
                 }
 
-            # Always increment mfg_index to maintain alignment
-            mfg_index += order_item_counts[expected_order_id]
+            # Always increment mfg_index to maintain alignment with manufacturing labels
+            mfg_index += item_count
 
-        # Step 6: Determine if validation passed
+        # Step 5: Determine if validation passed
         validation_report['is_valid'] = (
-            len(validation_report['missing_labels']) == 0 and
-            len(validation_report['unreadable_labels']) == 0
+            len(validation_report['missing_labels']) == 0
         )
 
         # Summary messages
@@ -520,8 +560,11 @@ def validate_label_mapping(shipping_pdf_bytes, order_dataframe):
             validation_report['summary'] = f"✅ Perfect match: All {len(seen_orders)} orders have shipping labels"
         else:
             missing_count = len(validation_report['missing_labels'])
-            unreadable_count = len(validation_report['unreadable_labels'])
-            validation_report['summary'] = f"❌ Validation failed: {missing_count} missing labels, {unreadable_count} unreadable labels"
+            failed_count = len([o for o in validation_report['missing_labels'] if o in failed_orders])
+            validation_report['summary'] = (
+                f"❌ Validation failed: {missing_count} orders without labels "
+                f"({failed_count} failed at Amazon, {missing_count - failed_count} not found)"
+            )
 
         return validation_report
 
@@ -1152,7 +1195,7 @@ def generate_summary_pdf(dataframe, summary_stats):
 # --------------------------------------
 with st.sidebar:
     st.markdown("# 🧵 Blanket Manager")
-    st.markdown("### Version 11.0 - Safe Merge")
+    st.markdown("### Version 11.1 - Smart Validation")
     st.markdown("---")
     
     st.markdown("#### 📋 Quick Navigation")
@@ -1464,14 +1507,18 @@ if uploaded:
     st.markdown("## 🔄 Merge Shipping & Manufacturing Labels")
 
     st.info("""
-    **🛡️ NEW: Safe Label Merging with Validation**
+    **🛡️ NEW: Safe Label Merging with Intelligent Validation**
     1. Generate Manufacturing Labels above (click the button)
-    2. Upload your shipping labels PDF from Amazon/UPS
-    3. **Validate** - System will extract Order IDs from shipping labels and verify alignment
-    4. **Review** - Check which orders have shipping labels before merging
-    5. **Merge** - Create combined PDF only for validated orders
+    2. Upload your shipping labels PDF from Amazon (with confirmation page)
+    3. **Validate** - System parses Amazon's confirmation page listing successful/failed orders
+    4. **Review** - See which orders got labels, which failed, and which are missing
+    5. **Merge** - Create combined PDF only for orders with successful labels
 
-    ✨ **Version 11.0:** Now validates Order IDs to prevent misaligned labels!
+    ✨ **How it works:** Amazon's shipping label PDFs include a confirmation page at the end that lists:
+    - "List of orders with successful label purchase" ✅
+    - "List of orders with error in label purchase" ❌
+
+    The system uses this to create perfect alignment, even when some orders fail!
     """)
 
     shipping_labels_upload = st.file_uploader(
@@ -1523,13 +1570,13 @@ if uploaded:
             col_m1, col_m2, col_m3, col_m4 = st.columns(4)
 
             with col_m1:
-                st.metric("✅ Matched Orders", len(validation_report['matched_orders']))
+                st.metric("✅ Successful Labels", len(validation_report['matched_orders']))
             with col_m2:
-                st.metric("❌ Missing Labels", len(validation_report['missing_labels']))
+                st.metric("❌ Failed at Amazon", len(validation_report['failed_orders']))
             with col_m3:
-                st.metric("⚠️ Unreadable Labels", len(validation_report['unreadable_labels']))
+                st.metric("⚠️ Missing/Not Found", len(validation_report['missing_labels']) - len(validation_report['failed_orders']))
             with col_m4:
-                st.metric("📄 Extra Labels", len(validation_report['extra_labels']))
+                st.metric("📄 Total Label Pages", validation_report['num_label_pages'])
 
             # Detailed breakdown
             with st.expander("📋 Detailed Validation Report", expanded=not validation_report['is_valid']):
@@ -1550,28 +1597,40 @@ if uploaded:
                         })
                     st.dataframe(pd.DataFrame(matched_df_data), use_container_width=True)
 
-                # Orders missing shipping labels
-                if validation_report['missing_labels']:
-                    st.markdown("#### ❌ Orders WITHOUT Shipping Labels")
-                    st.warning("⚠️ **CRITICAL:** These orders will NOT be included in the merge!")
+                # Orders that failed at Amazon
+                if validation_report['failed_orders']:
+                    st.markdown("#### ❌ Orders That FAILED at Amazon")
+                    st.error("⚠️ **Amazon could not generate labels for these orders (see error list in PDF)**")
+                    failed_df_data = []
+                    for order_id in validation_report['failed_orders']:
+                        if order_id in validation_report['expected_orders']:
+                            buyer = df[df['Order ID'] == order_id]['Buyer Name'].iloc[0]
+                            item_count = len(df[df['Order ID'] == order_id])
+                            failed_df_data.append({
+                                'Order ID': order_id,
+                                'Buyer Name': buyer,
+                                'Items': item_count,
+                                'Status': '❌ Label purchase failed'
+                            })
+                    if failed_df_data:
+                        st.dataframe(pd.DataFrame(failed_df_data), use_container_width=True)
+
+                # Orders missing from shipping labels (not in successful or failed lists)
+                missing_not_failed = [o for o in validation_report['missing_labels'] if o not in validation_report['failed_orders']]
+                if missing_not_failed:
+                    st.markdown("#### ⚠️ Orders NOT Found in Shipping Label PDF")
+                    st.warning("⚠️ These orders are in your manufacturing list but not in the shipping label PDF at all")
                     missing_df_data = []
-                    for order_id in validation_report['missing_labels']:
+                    for order_id in missing_not_failed:
                         buyer = df[df['Order ID'] == order_id]['Buyer Name'].iloc[0]
                         item_count = len(df[df['Order ID'] == order_id])
                         missing_df_data.append({
                             'Order ID': order_id,
                             'Buyer Name': buyer,
                             'Items': item_count,
-                            'Status': '⚠️ No shipping label found'
+                            'Status': '⚠️ Not in shipping PDF'
                         })
                     st.dataframe(pd.DataFrame(missing_df_data), use_container_width=True)
-
-                # Unreadable labels
-                if validation_report['unreadable_labels']:
-                    st.markdown("#### ⚠️ Unreadable Shipping Labels")
-                    st.warning("Could not extract Order ID from these shipping label pages:")
-                    for page_idx in validation_report['unreadable_labels']:
-                        st.write(f"• Page {page_idx + 1}: Order ID not found in PDF text")
 
                 # Extra labels
                 if validation_report['extra_labels']:
@@ -1762,7 +1821,7 @@ if uploaded:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #a0aec0; padding: 20px;'>
-    <p><strong>Amazon Blanket Order Manager v11.0 - Safe Merge</strong></p>
-    <p>Professional order processing & label generation system with validated merging</p>
+    <p><strong>Amazon Blanket Order Manager v11.1 - Confirmation Page Validation</strong></p>
+    <p>Professional order processing & label generation system with intelligent confirmation page parsing</p>
 </div>
 """, unsafe_allow_html=True)
