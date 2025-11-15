@@ -382,16 +382,29 @@ def parse_shipping_confirmation_pages(shipping_pdf_bytes):
 
     Amazon shipping label PDFs have:
     - Pages 1-N: Individual shipping labels (NO Order IDs visible)
-    - Pages N+1 onward: Confirmation pages with:
-        * "List of orders with successful label purchase" + Order IDs
-        * "List of orders with error in label purchase" + Order IDs (if any failures)
+    - Pages N+1 onward: Confirmation pages with Order IDs in format:
+        -112-3070259-0110633 (note the leading dash!)
+        -114-7247081-9577828
+
+    Format:
+        "List of orders with successful label purchase"
+        -112-3070259-0110633
+        -114-7247081-9577828
+        ...
+        "List of orders with error in label purchase"
+        -113-0309122-5339455
+        ...
 
     Returns:
         tuple: (successful_orders_list, failed_orders_list, num_label_pages)
+        Order IDs are returned WITHOUT the leading dash
     """
     successful_orders = []
     failed_orders = []
-    order_id_pattern = re.compile(r'\b(\d{3}-\d{7}-\d{7})\b')
+    # CRITICAL: Order IDs in confirmation page start with a dash!
+    # Pattern: -112-3070259-0110633
+    # We capture just the Order ID part (without the leading dash)
+    order_id_pattern = re.compile(r'-(\d{3}-\d{7}-\d{7})')
 
     try:
         with pdfplumber.open(shipping_pdf_bytes) as pdf:
@@ -411,6 +424,7 @@ def parse_shipping_confirmation_pages(shipping_pdf_bytes):
 
             if success_match:
                 success_text = success_match.group(1)
+                # findall returns the captured group (Order ID without leading dash)
                 successful_orders = order_id_pattern.findall(success_text)
 
             # Look for failed orders section
@@ -422,6 +436,7 @@ def parse_shipping_confirmation_pages(shipping_pdf_bytes):
 
             if failed_match:
                 failed_text = failed_match.group(1)
+                # findall returns the captured group (Order ID without leading dash)
                 failed_orders = order_id_pattern.findall(failed_text)
 
             # Calculate number of label pages
@@ -480,7 +495,10 @@ def validate_label_mapping(shipping_pdf_bytes, order_dataframe):
                 "❌ Could not find confirmation page in shipping label PDF."
             )
             validation_report['errors'].append(
-                "💡 Expected to find text: 'List of orders with successful label purchase'"
+                "💡 Expected format: 'List of orders with successful label purchase' followed by Order IDs"
+            )
+            validation_report['errors'].append(
+                "💡 Order IDs should be listed with leading dashes, e.g., -112-3070259-0110633"
             )
             validation_report['errors'].append(
                 "💡 Make sure you uploaded the complete PDF from Amazon that includes the confirmation page at the end."
@@ -1195,7 +1213,7 @@ def generate_summary_pdf(dataframe, summary_stats):
 # --------------------------------------
 with st.sidebar:
     st.markdown("# 🧵 Blanket Manager")
-    st.markdown("### Version 11.1 - Smart Validation")
+    st.markdown("### Version 11.2 - Leading Dash Fix")
     st.markdown("---")
     
     st.markdown("#### 📋 Quick Navigation")
@@ -1516,9 +1534,11 @@ if uploaded:
 
     ✨ **How it works:** Amazon's shipping label PDFs include a confirmation page at the end that lists:
     - "List of orders with successful label purchase" ✅
+      Example: -112-3070259-0110633, -114-7247081-9577828 (note the leading dash)
     - "List of orders with error in label purchase" ❌
+      Example: -113-0309122-5339455 (orders that failed)
 
-    The system uses this to create perfect alignment, even when some orders fail!
+    The system parses this confirmation page to create perfect label alignment!
     """)
 
     shipping_labels_upload = st.file_uploader(
@@ -1821,7 +1841,7 @@ if uploaded:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #a0aec0; padding: 20px;'>
-    <p><strong>Amazon Blanket Order Manager v11.1 - Confirmation Page Validation</strong></p>
+    <p><strong>Amazon Blanket Order Manager v11.2 - Leading Dash Fix</strong></p>
     <p>Professional order processing & label generation system with intelligent confirmation page parsing</p>
 </div>
 """, unsafe_allow_html=True)
