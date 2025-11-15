@@ -373,56 +373,298 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
     canvas_obj.restoreState()
 
 # --------------------------------------
-# FIXED: Label Merging Function
+# CRITICAL FIX: Safe Label Merging with Validation
+# --------------------------------------
+
+def extract_order_ids_from_shipping_pdf(shipping_pdf_bytes):
+    """
+    Extract Order IDs from shipping label PDF.
+    Amazon shipping labels contain Order IDs in format: XXX-XXXXXXX-XXXXXXX
+
+    Returns:
+        list: List of (page_index, order_id) tuples
+    """
+    extracted_orders = []
+    order_id_pattern = re.compile(r'\b(\d{3}-\d{7}-\d{7})\b')
+
+    try:
+        # Use pdfplumber to extract text from each page
+        with pdfplumber.open(shipping_pdf_bytes) as pdf:
+            for page_idx, page in enumerate(pdf.pages):
+                text = page.extract_text() or ""
+
+                # Search for Order ID pattern
+                matches = order_id_pattern.findall(text)
+
+                if matches:
+                    # Take the first match (should be the order ID for this label)
+                    order_id = matches[0]
+                    extracted_orders.append((page_idx, order_id))
+                else:
+                    # No Order ID found on this page
+                    extracted_orders.append((page_idx, None))
+
+        return extracted_orders
+
+    except Exception as e:
+        st.error(f"Error extracting Order IDs from shipping labels: {str(e)}")
+        return []
+
+
+def validate_label_mapping(shipping_pdf_bytes, order_dataframe):
+    """
+    Validate that shipping labels match the orders in the dataframe.
+
+    Returns:
+        dict: Validation report with structure:
+        {
+            'is_valid': bool,
+            'shipping_labels': list of (page_idx, order_id),
+            'expected_orders': list of order_ids from dataframe,
+            'matched_orders': list of order_ids that have shipping labels,
+            'missing_labels': list of order_ids without shipping labels,
+            'extra_labels': list of shipping label order_ids not in dataframe,
+            'unreadable_labels': list of page indices where Order ID couldn't be extracted,
+            'mapping': dict mapping order_id -> (shipping_page_idx, mfg_page_indices),
+            'warnings': list of warning messages,
+            'errors': list of error messages
+        }
+    """
+    validation_report = {
+        'is_valid': False,
+        'shipping_labels': [],
+        'expected_orders': [],
+        'matched_orders': [],
+        'missing_labels': [],
+        'extra_labels': [],
+        'unreadable_labels': [],
+        'mapping': {},
+        'warnings': [],
+        'errors': []
+    }
+
+    try:
+        # Step 1: Extract Order IDs from shipping labels
+        shipping_labels = extract_order_ids_from_shipping_pdf(shipping_pdf_bytes)
+        validation_report['shipping_labels'] = shipping_labels
+
+        # Track unreadable labels
+        for page_idx, order_id in shipping_labels:
+            if order_id is None:
+                validation_report['unreadable_labels'].append(page_idx)
+                validation_report['warnings'].append(
+                    f"⚠️ Shipping label page {page_idx + 1}: Could not extract Order ID"
+                )
+
+        # Step 2: Get expected order sequence from dataframe
+        seen_orders = []
+        order_item_counts = {}
+
+        for order_id in order_dataframe['Order ID']:
+            if order_id not in seen_orders:
+                seen_orders.append(order_id)
+                order_item_counts[order_id] = len(order_dataframe[order_dataframe['Order ID'] == order_id])
+
+        validation_report['expected_orders'] = seen_orders
+
+        # Step 3: Create mapping of shipping labels to Order IDs
+        shipping_order_map = {}
+        for page_idx, order_id in shipping_labels:
+            if order_id:
+                shipping_order_map[order_id] = page_idx
+
+        # Step 4: Compare shipping labels with expected orders
+        for order_id in seen_orders:
+            if order_id in shipping_order_map:
+                validation_report['matched_orders'].append(order_id)
+            else:
+                validation_report['missing_labels'].append(order_id)
+                validation_report['errors'].append(
+                    f"❌ Order {order_id}: No shipping label found"
+                )
+
+        # Check for extra shipping labels not in dataframe
+        for order_id, page_idx in shipping_order_map.items():
+            if order_id not in seen_orders:
+                validation_report['extra_labels'].append(order_id)
+                validation_report['warnings'].append(
+                    f"⚠️ Shipping label page {page_idx + 1} ({order_id}): Not found in manufacturing orders"
+                )
+
+        # Step 5: Build safe mapping for merge
+        # Only map orders that have matching shipping labels
+        mfg_index = 0
+        for expected_order_id in seen_orders:
+            if expected_order_id in shipping_order_map:
+                shipping_page = shipping_order_map[expected_order_id]
+                item_count = order_item_counts[expected_order_id]
+                mfg_pages = list(range(mfg_index, mfg_index + item_count))
+
+                validation_report['mapping'][expected_order_id] = {
+                    'shipping_page': shipping_page,
+                    'mfg_pages': mfg_pages,
+                    'item_count': item_count
+                }
+
+            # Always increment mfg_index to maintain alignment
+            mfg_index += order_item_counts[expected_order_id]
+
+        # Step 6: Determine if validation passed
+        validation_report['is_valid'] = (
+            len(validation_report['missing_labels']) == 0 and
+            len(validation_report['unreadable_labels']) == 0
+        )
+
+        # Summary messages
+        if validation_report['is_valid']:
+            validation_report['summary'] = f"✅ Perfect match: All {len(seen_orders)} orders have shipping labels"
+        else:
+            missing_count = len(validation_report['missing_labels'])
+            unreadable_count = len(validation_report['unreadable_labels'])
+            validation_report['summary'] = f"❌ Validation failed: {missing_count} missing labels, {unreadable_count} unreadable labels"
+
+        return validation_report
+
+    except Exception as e:
+        validation_report['errors'].append(f"Critical error during validation: {str(e)}")
+        return validation_report
+
+
+def merge_shipping_and_manufacturing_labels_safe(
+    shipping_pdf_bytes,
+    manufacturing_pdf_bytes,
+    validation_report,
+    mode='strict'
+):
+    """
+    Safely merge shipping labels with manufacturing labels using validated mapping.
+
+    Args:
+        shipping_pdf_bytes: BytesIO object containing shipping labels PDF
+        manufacturing_pdf_bytes: BytesIO object containing manufacturing labels PDF
+        validation_report: Validation report from validate_label_mapping()
+        mode: 'strict' (only merge validated labels) or 'flexible' (allow partial merges)
+
+    Returns:
+        tuple: (merged_pdf_buffer, num_shipping_labels, num_manufacturing_labels, merge_details)
+    """
+    try:
+        if mode == 'strict' and not validation_report['is_valid']:
+            return None, 0, 0, {
+                'success': False,
+                'message': 'Validation failed. Cannot merge in STRICT mode.',
+                'details': validation_report['errors']
+            }
+
+        shipping_pdf = PdfReader(shipping_pdf_bytes)
+        manufacturing_pdf = PdfReader(manufacturing_pdf_bytes)
+
+        output_pdf = PdfWriter()
+        merged_count = 0
+        mfg_labels_added = 0
+        merge_log = []
+
+        # Use the validated mapping
+        for order_id, mapping_info in validation_report['mapping'].items():
+            shipping_page = mapping_info['shipping_page']
+            mfg_pages = mapping_info['mfg_pages']
+            item_count = mapping_info['item_count']
+
+            # Verify shipping page exists
+            if shipping_page >= len(shipping_pdf.pages):
+                merge_log.append(f"⚠️ Skipped {order_id}: Shipping page {shipping_page} out of range")
+                continue
+
+            # Add shipping label
+            output_pdf.add_page(shipping_pdf.pages[shipping_page])
+            merged_count += 1
+
+            # Add corresponding manufacturing labels
+            labels_for_this_order = 0
+            for mfg_idx in mfg_pages:
+                if mfg_idx < len(manufacturing_pdf.pages):
+                    output_pdf.add_page(manufacturing_pdf.pages[mfg_idx])
+                    mfg_labels_added += 1
+                    labels_for_this_order += 1
+                else:
+                    merge_log.append(f"⚠️ {order_id}: Manufacturing page {mfg_idx} out of range")
+
+            merge_log.append(
+                f"✅ {order_id}: 1 shipping label + {labels_for_this_order} manufacturing label(s)"
+            )
+
+        # Write output
+        output_buffer = BytesIO()
+        output_pdf.write(output_buffer)
+        output_buffer.seek(0)
+
+        merge_details = {
+            'success': True,
+            'message': f'Successfully merged {merged_count} orders',
+            'merged_count': merged_count,
+            'mfg_labels_added': mfg_labels_added,
+            'log': merge_log,
+            'skipped_orders': validation_report['missing_labels']
+        }
+
+        return output_buffer, merged_count, mfg_labels_added, merge_details
+
+    except Exception as e:
+        return None, 0, 0, {
+            'success': False,
+            'message': f'Error during merge: {str(e)}',
+            'details': []
+        }
+
+
+# --------------------------------------
+# LEGACY: Old merge function (kept for compatibility)
 # --------------------------------------
 def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pdf_bytes, order_dataframe):
     """
-    Merge shipping labels with manufacturing labels.
-    Handles orders with multiple items (one shipping label, multiple manufacturing labels).
+    DEPRECATED: Use merge_shipping_and_manufacturing_labels_safe() instead.
+    This function assumes perfect 1:1 mapping and does NOT validate Order IDs.
     """
     try:
         shipping_pdf = PdfReader(shipping_pdf_bytes)
         manufacturing_pdf = PdfReader(manufacturing_pdf_bytes)
-        
-        # CRITICAL FIX: Preserve the order of orders as they appear in the dataframe
+
         seen_orders = []
         order_item_counts = []
-        
+
         for order_id in order_dataframe['Order ID']:
             if order_id not in seen_orders:
                 seen_orders.append(order_id)
                 item_count = len(order_dataframe[order_dataframe['Order ID'] == order_id])
                 order_item_counts.append(item_count)
-        
-        # Build mapping: shipping label index -> list of manufacturing label indices
+
         shipping_to_mfg = {}
         mfg_index = 0
-        
+
         for shipping_index, item_count in enumerate(order_item_counts):
             shipping_to_mfg[shipping_index] = list(range(mfg_index, mfg_index + item_count))
             mfg_index += item_count
-        
-        # Create merged PDF
+
         output_pdf = PdfWriter()
         total_shipping_labels = len(shipping_to_mfg)
-        
+
         for ship_idx in range(total_shipping_labels):
             if ship_idx >= len(shipping_pdf.pages):
                 break
-                
+
             output_pdf.add_page(shipping_pdf.pages[ship_idx])
-            
+
             if ship_idx in shipping_to_mfg:
                 for mfg_idx in shipping_to_mfg[ship_idx]:
                     if mfg_idx < len(manufacturing_pdf.pages):
                         output_pdf.add_page(manufacturing_pdf.pages[mfg_idx])
-        
+
         output_buffer = BytesIO()
         output_pdf.write(output_buffer)
         output_buffer.seek(0)
-        
+
         return output_buffer, len(shipping_to_mfg), sum(len(v) for v in shipping_to_mfg.values())
-        
+
     except Exception as e:
         st.error(f"Error merging labels: {str(e)}")
         return None, 0, 0
@@ -910,7 +1152,7 @@ def generate_summary_pdf(dataframe, summary_stats):
 # --------------------------------------
 with st.sidebar:
     st.markdown("# 🧵 Blanket Manager")
-    st.markdown("### Version 10.1 Dark")
+    st.markdown("### Version 11.0 - Safe Merge")
     st.markdown("---")
     
     st.markdown("#### 📋 Quick Navigation")
@@ -1215,72 +1457,277 @@ if uploaded:
             )
     
     # --------------------------------------
-    # Label Merging Section with anchor
+    # Label Merging Section with anchor - UPDATED WITH VALIDATION
     # --------------------------------------
     st.markdown("---")
     st.markdown('<a id="label-merge"></a>', unsafe_allow_html=True)
     st.markdown("## 🔄 Merge Shipping & Manufacturing Labels")
-    
+
     st.info("""
-    **Instructions for Label Merging:**
+    **🛡️ NEW: Safe Label Merging with Validation**
     1. Generate Manufacturing Labels above (click the button)
     2. Upload your shipping labels PDF from Amazon/UPS
-    3. Click merge to create a combined PDF
-    
-    ✨ **Version 10.1:** Fixed label ordering for multi-item orders!
+    3. **Validate** - System will extract Order IDs from shipping labels and verify alignment
+    4. **Review** - Check which orders have shipping labels before merging
+    5. **Merge** - Create combined PDF only for validated orders
+
+    ✨ **Version 11.0:** Now validates Order IDs to prevent misaligned labels!
     """)
-    
+
     shipping_labels_upload = st.file_uploader(
         "📤 Upload Shipping Labels PDF",
         type=["pdf"],
         key="shipping_labels",
         help="Upload the shipping labels PDF from Amazon or your carrier"
     )
-    
+
+    # Initialize session state for validation
+    if 'validation_report' not in st.session_state:
+        st.session_state.validation_report = None
+    if 'validation_done' not in st.session_state:
+        st.session_state.validation_done = False
+
     if shipping_labels_upload and st.session_state.manufacturing_labels_buffer:
-        col_merge1, col_merge2 = st.columns([3, 1])
-        
-        with col_merge1:
-            if st.button("🔀 Merge Labels Now", type="primary", use_container_width=True):
-                with st.spinner("Merging shipping and manufacturing labels..."):
+
+        # STEP 1: VALIDATION
+        st.markdown("### Step 1: Validate Label Alignment")
+
+        col_validate1, col_validate2 = st.columns([2, 1])
+
+        with col_validate1:
+            if st.button("🔍 Validate Shipping Labels", type="primary", use_container_width=True):
+                with st.spinner("🔍 Extracting Order IDs from shipping labels and validating..."):
                     shipping_labels_upload.seek(0)
-                    st.session_state.manufacturing_labels_buffer.seek(0)
-                    
-                    merged_pdf, num_shipping, num_manufacturing = merge_shipping_and_manufacturing_labels(
-                        shipping_labels_upload,
-                        st.session_state.manufacturing_labels_buffer,
-                        df
-                    )
-                    
-                    if merged_pdf:
-                        st.success(f"✅ Successfully merged {num_shipping} shipping labels with {num_manufacturing} manufacturing labels!")
-                        
-                        multi_item_orders = df.groupby('Order ID').size()
-                        multi_item_orders = multi_item_orders[multi_item_orders > 1]
-                        
-                        if len(multi_item_orders) > 0:
-                            with st.expander(f"ℹ️ Found {len(multi_item_orders)} order(s) with multiple items"):
-                                for order_id, count in multi_item_orders.items():
-                                    buyer = df[df['Order ID'] == order_id]['Buyer Name'].iloc[0]
-                                    st.write(f"• {buyer} ({order_id}): {count} blankets")
-                        
-                        st.download_button(
-                            label="⬇️ Download Merged Labels PDF",
-                            data=merged_pdf,
-                            file_name="Merged_Shipping_Manufacturing_Labels.pdf",
-                            mime="application/pdf",
-                            use_container_width=True
-                        )
-        
-        with col_merge2:
-            st.metric("Total Orders", df['Order ID'].nunique())
+                    validation_report = validate_label_mapping(shipping_labels_upload, df)
+                    st.session_state.validation_report = validation_report
+                    st.session_state.validation_done = True
+
+        with col_validate2:
+            st.metric("Expected Orders", df['Order ID'].nunique())
             st.metric("Total Items", len(df))
-    
+
+        # STEP 2: SHOW VALIDATION RESULTS
+        if st.session_state.validation_done and st.session_state.validation_report:
+            validation_report = st.session_state.validation_report
+
+            st.markdown("---")
+            st.markdown("### Step 2: Validation Results")
+
+            # Display summary
+            if validation_report['is_valid']:
+                st.success(validation_report['summary'])
+            else:
+                st.error(validation_report['summary'])
+
+            # Metrics
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+
+            with col_m1:
+                st.metric("✅ Matched Orders", len(validation_report['matched_orders']))
+            with col_m2:
+                st.metric("❌ Missing Labels", len(validation_report['missing_labels']))
+            with col_m3:
+                st.metric("⚠️ Unreadable Labels", len(validation_report['unreadable_labels']))
+            with col_m4:
+                st.metric("📄 Extra Labels", len(validation_report['extra_labels']))
+
+            # Detailed breakdown
+            with st.expander("📋 Detailed Validation Report", expanded=not validation_report['is_valid']):
+
+                # Orders with shipping labels
+                if validation_report['matched_orders']:
+                    st.markdown("#### ✅ Orders with Shipping Labels")
+                    matched_df_data = []
+                    for order_id in validation_report['matched_orders']:
+                        buyer = df[df['Order ID'] == order_id]['Buyer Name'].iloc[0]
+                        item_count = len(df[df['Order ID'] == order_id])
+                        shipping_page = validation_report['mapping'][order_id]['shipping_page']
+                        matched_df_data.append({
+                            'Order ID': order_id,
+                            'Buyer Name': buyer,
+                            'Items': item_count,
+                            'Shipping Label Page': shipping_page + 1
+                        })
+                    st.dataframe(pd.DataFrame(matched_df_data), use_container_width=True)
+
+                # Orders missing shipping labels
+                if validation_report['missing_labels']:
+                    st.markdown("#### ❌ Orders WITHOUT Shipping Labels")
+                    st.warning("⚠️ **CRITICAL:** These orders will NOT be included in the merge!")
+                    missing_df_data = []
+                    for order_id in validation_report['missing_labels']:
+                        buyer = df[df['Order ID'] == order_id]['Buyer Name'].iloc[0]
+                        item_count = len(df[df['Order ID'] == order_id])
+                        missing_df_data.append({
+                            'Order ID': order_id,
+                            'Buyer Name': buyer,
+                            'Items': item_count,
+                            'Status': '⚠️ No shipping label found'
+                        })
+                    st.dataframe(pd.DataFrame(missing_df_data), use_container_width=True)
+
+                # Unreadable labels
+                if validation_report['unreadable_labels']:
+                    st.markdown("#### ⚠️ Unreadable Shipping Labels")
+                    st.warning("Could not extract Order ID from these shipping label pages:")
+                    for page_idx in validation_report['unreadable_labels']:
+                        st.write(f"• Page {page_idx + 1}: Order ID not found in PDF text")
+
+                # Extra labels
+                if validation_report['extra_labels']:
+                    st.markdown("#### 📄 Extra Shipping Labels")
+                    st.info("These shipping labels are not in your manufacturing orders:")
+                    for order_id in validation_report['extra_labels']:
+                        st.write(f"• Order ID: {order_id}")
+
+                # Show all warnings and errors
+                if validation_report['warnings']:
+                    st.markdown("#### ⚠️ Warnings")
+                    for warning in validation_report['warnings']:
+                        st.warning(warning)
+
+                if validation_report['errors']:
+                    st.markdown("#### ❌ Errors")
+                    for error in validation_report['errors']:
+                        st.error(error)
+
+            # STEP 3: MERGE MODE SELECTION
+            st.markdown("---")
+            st.markdown("### Step 3: Choose Merge Mode")
+
+            col_mode1, col_mode2 = st.columns(2)
+
+            with col_mode1:
+                st.markdown("#### 🛡️ STRICT Mode (Recommended)")
+                st.markdown("""
+                - ✅ Only merge if ALL orders have shipping labels
+                - ✅ Prevents any misalignment
+                - ❌ Blocks merge if validation fails
+                """)
+                if validation_report['is_valid']:
+                    strict_enabled = True
+                    st.success("✅ STRICT mode available")
+                else:
+                    strict_enabled = False
+                    st.error("❌ Cannot use STRICT mode - validation failed")
+
+            with col_mode2:
+                st.markdown("#### ⚙️ FLEXIBLE Mode")
+                st.markdown("""
+                - ✅ Merge only orders that have shipping labels
+                - ⚠️ Skip orders without shipping labels
+                - ℹ️ Use when some orders are cancelled/delayed
+                """)
+                if len(validation_report['matched_orders']) > 0:
+                    flexible_enabled = True
+                    st.info(f"ℹ️ Will merge {len(validation_report['matched_orders'])} orders")
+                else:
+                    flexible_enabled = False
+                    st.error("❌ No orders to merge")
+
+            # STEP 4: MERGE WITH CONFIRMATION
+            st.markdown("---")
+            st.markdown("### Step 4: Review & Merge")
+
+            merge_mode = st.radio(
+                "Select merge mode:",
+                options=["strict", "flexible"],
+                format_func=lambda x: "🛡️ STRICT - All orders must have labels" if x == "strict" else "⚙️ FLEXIBLE - Merge available orders only",
+                disabled=not (strict_enabled or flexible_enabled),
+                index=0 if strict_enabled else (1 if flexible_enabled else 0)
+            )
+
+            # Merge preview
+            with st.expander("📋 Merge Preview - What will be merged?", expanded=True):
+                preview_data = []
+                for order_id, mapping_info in validation_report['mapping'].items():
+                    buyer = df[df['Order ID'] == order_id]['Buyer Name'].iloc[0]
+                    preview_data.append({
+                        'Order ID': order_id,
+                        'Buyer': buyer,
+                        'Shipping Label Page': mapping_info['shipping_page'] + 1,
+                        'Manufacturing Labels': f"{mapping_info['item_count']} label(s)",
+                        'Status': '✅ Ready to merge'
+                    })
+
+                if preview_data:
+                    st.dataframe(pd.DataFrame(preview_data), use_container_width=True)
+                    st.success(f"**{len(preview_data)} order(s) will be merged** ({sum([m['item_count'] for m in validation_report['mapping'].values()])} manufacturing labels total)")
+                else:
+                    st.error("No orders available for merging")
+
+            # Merge button
+            can_merge = (merge_mode == "strict" and strict_enabled) or (merge_mode == "flexible" and flexible_enabled)
+
+            if can_merge:
+                col_merge_btn1, col_merge_btn2 = st.columns([3, 1])
+
+                with col_merge_btn1:
+                    if st.button("✅ CONFIRM AND MERGE LABELS", type="primary", use_container_width=True):
+                        with st.spinner(f"Merging labels in {merge_mode.upper()} mode..."):
+                            shipping_labels_upload.seek(0)
+                            st.session_state.manufacturing_labels_buffer.seek(0)
+
+                            merged_pdf, num_shipping, num_manufacturing, merge_details = merge_shipping_and_manufacturing_labels_safe(
+                                shipping_labels_upload,
+                                st.session_state.manufacturing_labels_buffer,
+                                validation_report,
+                                mode=merge_mode
+                            )
+
+                            if merged_pdf and merge_details['success']:
+                                st.success(f"🎉 {merge_details['message']}")
+
+                                # Show merge details
+                                with st.expander("📊 Merge Details", expanded=True):
+                                    col_d1, col_d2 = st.columns(2)
+                                    with col_d1:
+                                        st.metric("Orders Merged", merge_details['merged_count'])
+                                    with col_d2:
+                                        st.metric("Manufacturing Labels", merge_details['mfg_labels_added'])
+
+                                    if merge_details['log']:
+                                        st.markdown("#### Merge Log")
+                                        for log_entry in merge_details['log']:
+                                            if '✅' in log_entry:
+                                                st.success(log_entry)
+                                            elif '⚠️' in log_entry:
+                                                st.warning(log_entry)
+
+                                    if merge_details['skipped_orders']:
+                                        st.warning(f"⚠️ Skipped {len(merge_details['skipped_orders'])} order(s) without shipping labels:")
+                                        for skipped_order in merge_details['skipped_orders']:
+                                            buyer = df[df['Order ID'] == skipped_order]['Buyer Name'].iloc[0]
+                                            st.write(f"• {skipped_order} - {buyer}")
+
+                                st.download_button(
+                                    label="⬇️ Download Merged Labels PDF",
+                                    data=merged_pdf,
+                                    file_name="Merged_Shipping_Manufacturing_Labels_VALIDATED.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True
+                                )
+                            else:
+                                st.error(f"❌ Merge failed: {merge_details['message']}")
+                                if merge_details.get('details'):
+                                    with st.expander("Error Details"):
+                                        for detail in merge_details['details']:
+                                            st.write(detail)
+
+                with col_merge_btn2:
+                    if st.button("🔄 Start Over", use_container_width=True):
+                        st.session_state.validation_done = False
+                        st.session_state.validation_report = None
+                        st.rerun()
+            else:
+                st.error("Cannot merge: Validation failed and no valid orders available")
+                st.info("💡 Tip: Check with Amazon why some orders don't have shipping labels. They may be cancelled or on hold.")
+
     elif shipping_labels_upload and not st.session_state.manufacturing_labels_buffer:
         st.warning("⚠️ Please generate Manufacturing Labels first (click the button above)")
-    
+
     elif not shipping_labels_upload and st.session_state.manufacturing_labels_buffer:
-        st.info("📤 Upload your shipping labels PDF above to enable merging")
+        st.info("📤 Upload your shipping labels PDF above to begin validation")
 
     # --------------------------------------
     # Airtable Upload Section with anchor
@@ -1315,8 +1762,8 @@ if uploaded:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #a0aec0; padding: 20px;'>
-    <p><strong>Amazon Blanket Order Manager v10.1 Dark</strong></p>
-    <p>Professional order processing & label generation system</p>
+    <p><strong>Amazon Blanket Order Manager v11.0 - Safe Merge</strong></p>
+    <p>Professional order processing & label generation system with validated merging</p>
 </div>
 """, unsafe_allow_html=True)
 
