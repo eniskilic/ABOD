@@ -376,6 +376,74 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
 # CRITICAL FIX: Safe Label Merging with Validation
 # --------------------------------------
 
+def identify_shipping_label_pages(shipping_pdf_bytes):
+    """
+    Identify which pages are actual shipping labels vs confirmation pages.
+
+    Shipping labels have: tracking numbers, carrier names (UPS/FedEx/USPS), barcodes
+    Confirmation pages have: "List of orders with successful/error label purchase"
+
+    Returns:
+        dict: {
+            'shipping_label_pages': [list of page indices],
+            'confirmation_pages': [list of page indices],
+            'total_pages': int
+        }
+    """
+    shipping_label_pages = []
+    confirmation_pages = []
+
+    try:
+        with pdfplumber.open(shipping_pdf_bytes) as pdf:
+            total_pages = len(pdf.pages)
+
+            for i, page in enumerate(pdf.pages):
+                text = page.extract_text() or ""
+                text_upper = text.upper()
+
+                # Detect confirmation pages by keywords
+                is_confirmation = any([
+                    "LIST OF ORDERS WITH SUCCESSFUL LABEL PURCHASE" in text_upper,
+                    "LIST OF ORDERS WITH ERROR IN LABEL PURCHASE" in text_upper,
+                ])
+
+                # Detect shipping labels by carrier keywords and structure
+                is_shipping_label = any([
+                    "TRACKING" in text_upper,
+                    "UPS GROUND" in text_upper,
+                    "UPS NEXT DAY" in text_upper,
+                    "UPS 2ND DAY" in text_upper,
+                    "UPS 3 DAY" in text_upper,
+                    "FEDEX" in text_upper,
+                    "USPS" in text_upper,
+                    "PRIORITY MAIL" in text_upper,
+                    "SHIP TO:" in text_upper or "SHIP TO" in text_upper,
+                    "FROM:" in text_upper and "TO:" in text_upper,
+                ])
+
+                if is_confirmation:
+                    confirmation_pages.append(i)
+                elif is_shipping_label:
+                    shipping_label_pages.append(i)
+                # If neither, assume it's a shipping label (for thermal labels with minimal text)
+                elif len(text) < 500 and not is_confirmation:
+                    shipping_label_pages.append(i)
+
+            return {
+                'shipping_label_pages': shipping_label_pages,
+                'confirmation_pages': confirmation_pages,
+                'total_pages': total_pages
+            }
+
+    except Exception as e:
+        st.error(f"Error identifying page types: {str(e)}")
+        return {
+            'shipping_label_pages': [],
+            'confirmation_pages': [],
+            'total_pages': 0
+        }
+
+
 def parse_shipping_confirmation_pages(shipping_pdf_bytes):
     """
     Parse Amazon shipping label confirmation pages.
@@ -481,13 +549,20 @@ def validate_label_mapping(shipping_pdf_bytes, order_dataframe):
         'missing_labels': [],
         'extra_labels': [],
         'num_label_pages': 0,
+        'shipping_label_pages': [],
+        'confirmation_pages': [],
         'mapping': {},
         'warnings': [],
         'errors': []
     }
 
     try:
-        # Step 1: Parse confirmation page to get successful and failed orders
+        # Step 1: Identify which pages are shipping labels vs confirmation pages
+        page_types = identify_shipping_label_pages(shipping_pdf_bytes)
+        shipping_label_pages = page_types['shipping_label_pages']
+        confirmation_pages = page_types['confirmation_pages']
+
+        # Step 2: Parse confirmation page to get successful and failed orders
         successful_orders, failed_orders, num_label_pages = parse_shipping_confirmation_pages(shipping_pdf_bytes)
 
         if not successful_orders and not failed_orders:
@@ -508,9 +583,17 @@ def validate_label_mapping(shipping_pdf_bytes, order_dataframe):
             )
             return validation_report
 
+        # Step 3: Verify shipping label pages match successful order count
+        if len(shipping_label_pages) != len(successful_orders):
+            validation_report['warnings'].append(
+                f"⚠️ Page count mismatch: Found {len(shipping_label_pages)} shipping label pages but {len(successful_orders)} successful orders"
+            )
+
         validation_report['successful_orders'] = successful_orders
         validation_report['failed_orders'] = failed_orders
-        validation_report['num_label_pages'] = num_label_pages
+        validation_report['num_label_pages'] = len(shipping_label_pages)
+        validation_report['shipping_label_pages'] = shipping_label_pages
+        validation_report['confirmation_pages'] = confirmation_pages
 
         # Step 2: Get expected order sequence from dataframe
         seen_orders = []
@@ -547,7 +630,9 @@ def validate_label_mapping(shipping_pdf_bytes, order_dataframe):
                 )
 
         # Step 4: Build safe mapping for merge
-        # Key insight: Shipping labels are in the SAME ORDER as successful_orders list
+        # CRITICAL: Map Order IDs to ACTUAL shipping label page indices
+        # The successful_orders list position tells us WHICH shipping label
+        # The shipping_label_pages list gives us the ACTUAL page index in the PDF
         label_index = 0
         mfg_index = 0
 
@@ -555,14 +640,27 @@ def validate_label_mapping(shipping_pdf_bytes, order_dataframe):
             item_count = order_item_counts[expected_order_id]
 
             if expected_order_id in successful_orders:
-                # Find this order's position in the successful_orders list
-                shipping_page = successful_orders.index(expected_order_id)
+                # Find position in successful orders list
+                position_in_list = successful_orders.index(expected_order_id)
+
+                # Get the actual page index of that shipping label
+                # This ensures we use the shipping label page, NOT the confirmation page
+                if position_in_list < len(shipping_label_pages):
+                    actual_shipping_page = shipping_label_pages[position_in_list]
+                else:
+                    # Fallback: use position as page index
+                    actual_shipping_page = position_in_list
+                    validation_report['warnings'].append(
+                        f"⚠️ Order {expected_order_id}: Using position {position_in_list} as page index (shipping label pages list too short)"
+                    )
+
                 mfg_pages = list(range(mfg_index, mfg_index + item_count))
 
                 validation_report['mapping'][expected_order_id] = {
-                    'shipping_page': shipping_page,
+                    'shipping_page': actual_shipping_page,
                     'mfg_pages': mfg_pages,
-                    'item_count': item_count
+                    'item_count': item_count,
+                    'position': position_in_list
                 }
 
             # Always increment mfg_index to maintain alignment with manufacturing labels
@@ -1213,7 +1311,7 @@ def generate_summary_pdf(dataframe, summary_stats):
 # --------------------------------------
 with st.sidebar:
     st.markdown("# 🧵 Blanket Manager")
-    st.markdown("### Version 11.2 - Leading Dash Fix")
+    st.markdown("### Version 11.3 - Page Detection Fix")
     st.markdown("---")
     
     st.markdown("#### 📋 Quick Navigation")
@@ -1528,17 +1626,17 @@ if uploaded:
     **🛡️ NEW: Safe Label Merging with Intelligent Validation**
     1. Generate Manufacturing Labels above (click the button)
     2. Upload your shipping labels PDF from Amazon (with confirmation page)
-    3. **Validate** - System parses Amazon's confirmation page listing successful/failed orders
+    3. **Validate** - System identifies shipping label pages and parses confirmation page
     4. **Review** - See which orders got labels, which failed, and which are missing
-    5. **Merge** - Create combined PDF only for orders with successful labels
+    5. **Merge** - Create combined PDF with ONLY shipping labels (confirmation pages skipped)
 
-    ✨ **How it works:** Amazon's shipping label PDFs include a confirmation page at the end that lists:
-    - "List of orders with successful label purchase" ✅
-      Example: -112-3070259-0110633, -114-7247081-9577828 (note the leading dash)
-    - "List of orders with error in label purchase" ❌
-      Example: -113-0309122-5339455 (orders that failed)
+    ✨ **How it works:**
+    - **Page Detection**: System identifies actual UPS/FedEx labels vs confirmation pages
+    - **Order Validation**: Parses confirmation page for Order IDs (format: -112-3070259-0110633)
+    - **Smart Merging**: Uses ONLY shipping label pages, skips confirmation pages
+    - **Result**: [Shipping Label] → [Manufacturing Label] → [Shipping Label] → [Manufacturing Label]
 
-    The system parses this confirmation page to create perfect label alignment!
+    **Amazon PDF Structure**: Pages 1-N are shipping labels, Pages N+1+ are confirmation pages
     """)
 
     shipping_labels_upload = st.file_uploader(
@@ -1596,7 +1694,23 @@ if uploaded:
             with col_m3:
                 st.metric("⚠️ Missing/Not Found", len(validation_report['missing_labels']) - len(validation_report['failed_orders']))
             with col_m4:
-                st.metric("📄 Total Label Pages", validation_report['num_label_pages'])
+                st.metric("📄 Shipping Label Pages", validation_report['num_label_pages'])
+
+            # Page type detection info
+            if validation_report.get('shipping_label_pages') and validation_report.get('confirmation_pages'):
+                with st.expander("📋 PDF Structure Analysis", expanded=False):
+                    col_p1, col_p2 = st.columns(2)
+                    with col_p1:
+                        st.metric("🏷️ Shipping Label Pages", len(validation_report['shipping_label_pages']))
+                        if validation_report['shipping_label_pages']:
+                            page_range = f"Pages {min(validation_report['shipping_label_pages'])+1}-{max(validation_report['shipping_label_pages'])+1}"
+                            st.caption(page_range)
+                    with col_p2:
+                        st.metric("📄 Confirmation Pages", len(validation_report['confirmation_pages']))
+                        if validation_report['confirmation_pages']:
+                            page_range = f"Pages {min(validation_report['confirmation_pages'])+1}-{max(validation_report['confirmation_pages'])+1}"
+                            st.caption(page_range)
+                    st.success("✅ System will use ONLY shipping label pages (confirmation pages will be skipped)")
 
             # Detailed breakdown
             with st.expander("📋 Detailed Validation Report", expanded=not validation_report['is_valid']):
@@ -1841,7 +1955,7 @@ if uploaded:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #a0aec0; padding: 20px;'>
-    <p><strong>Amazon Blanket Order Manager v11.2 - Leading Dash Fix</strong></p>
-    <p>Professional order processing & label generation system with intelligent confirmation page parsing</p>
+    <p><strong>Amazon Blanket Order Manager v11.3 - Page Detection Fix</strong></p>
+    <p>Professional order processing & label generation with smart page detection and validation</p>
 </div>
 """, unsafe_allow_html=True)
