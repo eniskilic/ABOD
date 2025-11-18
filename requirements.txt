@@ -4,4 +4,6 @@ pandas
 reportlab
 pyairtable
 pypdf
+rapidfuzz
+
 
