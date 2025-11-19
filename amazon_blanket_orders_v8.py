@@ -651,7 +651,7 @@ def upload_to_airtable(dataframe):
     return orders_created, line_items_created, errors
 
 # --------------------------------------
-# PDF Generation Functions (same as before)
+# PDF Generation Functions
 # --------------------------------------
 def generate_manufacturing_labels(dataframe):
     buf = BytesIO()
@@ -1003,7 +1003,7 @@ with st.sidebar:
     st.markdown("✓ Label Generation")
     st.markdown("✓ Order Merging")
     st.markdown("✓ Cloud Sync")
-    st.markmarkdown("✓ Spanish Translation")
+    st.markdown("✓ Spanish Translation")
     st.markdown("✓ Duplicate Detection")
     
     st.markdown("---")
