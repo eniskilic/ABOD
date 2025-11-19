@@ -1471,9 +1471,17 @@ if uploaded:
                     shipping_labels_upload.seek(0)
                     st.session_state.manufacturing_labels_buffer.seek(0)
                     
+                    # Read both PDFs into bytes
+                    shipping_pdf_bytes = shipping_labels_upload.read()
+                    manufacturing_pdf_bytes = st.session_state.manufacturing_labels_buffer.read()
+                    
+                    # Reset buffers for potential reuse
+                    shipping_labels_upload.seek(0)
+                    st.session_state.manufacturing_labels_buffer.seek(0)
+                    
                     merged_pdf, num_shipping, num_manufacturing = merge_shipping_and_manufacturing_labels(
-                        shipping_labels_upload,
-                        st.session_state.manufacturing_labels_buffer,
+                        shipping_pdf_bytes,
+                        manufacturing_pdf_bytes,
                         df
                     )
                     
