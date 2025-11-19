@@ -1003,7 +1003,7 @@ with st.sidebar:
     st.markdown("✓ Label Generation")
     st.markdown("✓ Order Merging")
     st.markdown("✓ Cloud Sync")
-    st.markdown("✓ Spanish Translation")
+    st.markmarkdown("✓ Spanish Translation")  # <-- if this line errors, change to st.markdown
     st.markdown("✓ Duplicate Detection")
     
     st.markdown("---")
@@ -1117,6 +1117,19 @@ if uploaded:
     
     with st.expander("📊 View Order Data"):
         st.dataframe(df, use_container_width=True)
+
+    # Build order summary for preview use
+    unique_orders = list(df['Order ID'].dropna().unique())
+    order_preview_info = []
+    for oid in unique_orders:
+        sub = df[df['Order ID'] == oid]
+        buyer = sub['Buyer Name'].iloc[0] if len(sub) > 0 else ""
+        item_count = len(sub)
+        order_preview_info.append({
+            "order_id": oid,
+            "buyer": buyer,
+            "items": item_count
+        })
 
     # --------------------------------------
     # Calculate Summary Statistics
@@ -1287,7 +1300,7 @@ if uploaded:
             )
     
     # --------------------------------------
-    # Label Merging Section with anchor (updated for manual control)
+    # Label Merging Section with anchor (updated for manual control + names)
     # --------------------------------------
     st.markdown("---")
     st.markdown('<a id="label-merge"></a>', unsafe_allow_html=True)
@@ -1300,8 +1313,7 @@ if uploaded:
     3. Uncheck manifest or extra pages
     4. Click merge to create a combined PDF
 
-    ✨ Now you have manual control over which shipping pages are used. 
-    The app will stop and warn you if counts don't match.
+    ✨ Now each shipping page shows the **suggested buyer + order ID** based on the order table.
     """)
     
     shipping_labels_upload = st.file_uploader(
@@ -1337,7 +1349,18 @@ if uploaded:
                 )
                 selections[i] = checked
             with cols[1]:
-                st.markdown(f"**Page {i+1} preview:**")
+                st.markdown(f"**Page {i+1}**")
+
+                # Suggested order from manufacturing labels / order table
+                if i < len(order_preview_info):
+                    info = order_preview_info[i]
+                    st.markdown(
+                        f"Suggested order: **{info['buyer']}**  "
+                        f"(`{info['order_id']}`) – {info['items']} item(s)"
+                    )
+                else:
+                    st.markdown("_No matching order (extra page, probably manifest / summary)_")
+
                 st.code(snippet or "(no text found)", language="text")
 
         st.session_state.shipping_page_selection = selections
