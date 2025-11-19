@@ -338,7 +338,6 @@ def clean_text(s: str) -> str:
     s = re.sub(r"\s{2,}", " ", s)
     return s.strip()
 
-
 def translate_thread_color(color):
     """Adds Spanish translation."""
     if not color:
@@ -349,17 +348,13 @@ def translate_thread_color(color):
             return f"{base} ({esp})"
     return base
 
-
 def get_bobbin_color(thread_color):
-    """Determine bobbin color based on thread color (safe for missing values)."""
-    if not isinstance(thread_color, str):
-        return "White Bobbin"
+    """Determine bobbin color based on thread color"""
     thread_lower = thread_color.lower()
     if 'navy' in thread_lower or 'black' in thread_lower or 'negro' in thread_lower:
         return 'Black Bobbin'
     else:
         return 'White Bobbin'
-
 
 def draw_checkbox(canvas_obj, x, y, size, is_checked):
     """Draw a checkbox at position (x, y) with given size."""
@@ -377,122 +372,57 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
     
     canvas_obj.restoreState()
 
-
-def get_shipping_page_snippets(file_obj):
-    """
-    Return a list of simple text snippets for each page of the shipping labels PDF.
-    Used to let the user decide which pages are real shipping labels.
-    """
-    snippets = []
-    try:
-        with pdfplumber.open(file_obj) as pdf:
-            for idx, page in enumerate(pdf.pages):
-                text = page.extract_text() or ""
-                snippet = "\n".join(text.splitlines()[:6])  # first 6 lines
-                if len(snippet) > 400:
-                    snippet = snippet[:400] + "..."
-                snippets.append(snippet.strip())
-    except Exception as e:
-        st.warning(f"Could not extract text snippets from shipping labels PDF: {e}")
-    return snippets
-
 # --------------------------------------
-# UPDATED: Label Merging Function (manual control via selected pages)
+# FIXED: Label Merging Function
 # --------------------------------------
-def merge_shipping_and_manufacturing_labels(
-    shipping_pdf_bytes,
-    manufacturing_pdf_bytes,
-    order_dataframe,
-    selected_shipping_indices
-):
+def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pdf_bytes, order_dataframe):
     """
     Merge shipping labels with manufacturing labels.
-
-    shipping_pdf_bytes: file-like object for shipping labels PDF
-    manufacturing_pdf_bytes: file-like object for manufacturing labels PDF
-    order_dataframe: parsed order details (df)
-    selected_shipping_indices: list of page indices (0-based) from the shipping PDF
-                               that should be used as *shipping labels*, in order.
+    Handles orders with multiple items (one shipping label, multiple manufacturing labels).
     """
     try:
         shipping_pdf = PdfReader(shipping_pdf_bytes)
         manufacturing_pdf = PdfReader(manufacturing_pdf_bytes)
-
-        # 1) Basic counts
-        unique_orders = list(order_dataframe['Order ID'].dropna().unique())
-        num_orders = len(unique_orders)
-        num_selected_shipping = len(selected_shipping_indices)
-        num_mfg_pages = len(manufacturing_pdf.pages)
-
-        # We still assume 1 manufacturing page per line item
+        
+        # CRITICAL FIX: Preserve the order of orders as they appear in the dataframe
+        seen_orders = []
         order_item_counts = []
-        for order_id in unique_orders:
-            item_count = len(order_dataframe[order_dataframe['Order ID'] == order_id])
-            order_item_counts.append(item_count)
-
-        expected_mfg_pages = sum(order_item_counts)
-
-        # 2) Safety checks
-        if num_selected_shipping == 0:
-            st.error("❌ No shipping label pages selected. Please select at least one shipping page.")
-            return None, 0, 0
-
-        if num_selected_shipping != num_orders:
-            st.error(
-                f"❌ Shipping / order mismatch: you selected {num_selected_shipping} shipping pages "
-                f"but there are {num_orders} unique orders in the table.\n\n"
-                "Please uncheck extra pages (like manifest pages) or add missing pages so the numbers match."
-            )
-            return None, 0, 0
-
-        if num_mfg_pages != expected_mfg_pages:
-            st.warning(
-                f"⚠️ Manufacturing labels mismatch: PDF has {num_mfg_pages} pages "
-                f"but based on the table we expect {expected_mfg_pages} pages.\n\n"
-                "The merge will continue, but please double-check the result."
-            )
-
-        # 3) Build mapping: order -> shipping page
-        order_to_ship_page = {
-            order_id: selected_shipping_indices[idx]
-            for idx, order_id in enumerate(unique_orders)
-        }
-
-        # 4) Build mapping: shipping page -> list of manufacturing label indices
+        
+        for order_id in order_dataframe['Order ID']:
+            if order_id not in seen_orders:
+                seen_orders.append(order_id)
+                item_count = len(order_dataframe[order_dataframe['Order ID'] == order_id])
+                order_item_counts.append(item_count)
+        
+        # Build mapping: shipping label index -> list of manufacturing label indices
         shipping_to_mfg = {}
         mfg_index = 0
-        for order_idx, order_id in enumerate(unique_orders):
-            item_count = order_item_counts[order_idx]
-            shipping_page = order_to_ship_page[order_id]
-            shipping_to_mfg[shipping_page] = list(range(mfg_index, mfg_index + item_count))
+        
+        for shipping_index, item_count in enumerate(order_item_counts):
+            shipping_to_mfg[shipping_index] = list(range(mfg_index, mfg_index + item_count))
             mfg_index += item_count
-
-        # 5) Create merged PDF in the order of selected_shipping_indices
+        
+        # Create merged PDF
         output_pdf = PdfWriter()
-        total_pairs = 0
-        total_mfg_used = 0
-
-        for ship_page in selected_shipping_indices:
-            if ship_page >= len(shipping_pdf.pages):
-                continue
-
-            # Add shipping label page
-            output_pdf.add_page(shipping_pdf.pages[ship_page])
-            total_pairs += 1
-
-            # Add manufacturing labels for this shipping page (order)
-            if ship_page in shipping_to_mfg:
-                for mfg_idx in shipping_to_mfg[ship_page]:
+        total_shipping_labels = len(shipping_to_mfg)
+        
+        for ship_idx in range(total_shipping_labels):
+            if ship_idx >= len(shipping_pdf.pages):
+                break
+                
+            output_pdf.add_page(shipping_pdf.pages[ship_idx])
+            
+            if ship_idx in shipping_to_mfg:
+                for mfg_idx in shipping_to_mfg[ship_idx]:
                     if mfg_idx < len(manufacturing_pdf.pages):
                         output_pdf.add_page(manufacturing_pdf.pages[mfg_idx])
-                        total_mfg_used += 1
-
+        
         output_buffer = BytesIO()
         output_pdf.write(output_buffer)
         output_buffer.seek(0)
-
-        return output_buffer, total_pairs, total_mfg_used
-
+        
+        return output_buffer, len(shipping_to_mfg), sum(len(v) for v in shipping_to_mfg.values())
+        
     except Exception as e:
         st.error(f"Error merging labels: {str(e)}")
         return None, 0, 0
@@ -540,7 +470,6 @@ def get_existing_order_ids():
         st.warning(f"Error checking for duplicates: {str(e)}")
     
     return existing_orders
-
 
 def upload_to_airtable(dataframe):
     """Upload parsed orders to Airtable with duplicate detection"""
@@ -651,7 +580,7 @@ def upload_to_airtable(dataframe):
     return orders_created, line_items_created, errors
 
 # --------------------------------------
-# PDF Generation Functions
+# PDF Generation Functions (same as before)
 # --------------------------------------
 def generate_manufacturing_labels(dataframe):
     buf = BytesIO()
@@ -765,7 +694,6 @@ def generate_manufacturing_labels(dataframe):
     buf.seek(0)
     return buf
 
-
 def generate_gift_message_labels(dataframe):
     buf = BytesIO()
     page_size = landscape((4 * inch, 6 * inch))
@@ -816,7 +744,6 @@ def generate_gift_message_labels(dataframe):
     c.save()
     buf.seek(0)
     return buf
-
 
 def generate_summary_pdf(dataframe, summary_stats):
     buf = BytesIO()
@@ -988,6 +915,7 @@ with st.sidebar:
     
     st.markdown("#### 📋 Quick Navigation")
     
+    # Functional navigation links with anchor tags
     st.markdown('<a href="#upload-order" class="nav-link">📄 Upload Order</a>', unsafe_allow_html=True)
     st.markdown('<a href="#dashboard" class="nav-link">📊 Dashboard</a>', unsafe_allow_html=True)
     st.markdown('<a href="#color-analytics" class="nav-link">🎨 Color Analytics</a>', unsafe_allow_html=True)
@@ -1118,19 +1046,6 @@ if uploaded:
     with st.expander("📊 View Order Data"):
         st.dataframe(df, use_container_width=True)
 
-    # Build order summary for preview use
-    unique_orders = list(df['Order ID'].dropna().unique())
-    order_preview_info = []
-    for oid in unique_orders:
-        sub = df[df['Order ID'] == oid]
-        buyer = sub['Buyer Name'].iloc[0] if len(sub) > 0 else ""
-        item_count = len(sub)
-        order_preview_info.append({
-            "order_id": oid,
-            "buyer": buyer,
-            "items": item_count
-        })
-
     # --------------------------------------
     # Calculate Summary Statistics
     # --------------------------------------
@@ -1163,19 +1078,19 @@ if uploaded:
     st.markdown('<a id="dashboard"></a>', unsafe_allow_html=True)
     st.markdown("## 📊 Order Dashboard")
     
-    col1_m, col2_m, col3_m, col4_m, col5_m, col6_m = st.columns(6)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     
-    with col1_m:
+    with col1:
         st.metric("Total Blankets", total_blankets)
-    with col2_m:
+    with col2:
         st.metric("Total Orders", total_orders)
-    with col3_m:
+    with col3:
         st.metric("Beanies", total_beanies)
-    with col4_m:
+    with col4:
         st.metric("Gift Boxes", gift_boxes_needed)
-    with col5_m:
+    with col5:
         st.metric("Gift Messages", gift_messages_needed)
-    with col6_m:
+    with col6:
         st.metric("Unique Colors", len(blanket_color_counts))
     
     col7, col8 = st.columns(2)
@@ -1240,9 +1155,9 @@ if uploaded:
     if 'manufacturing_labels_buffer' not in st.session_state:
         st.session_state.manufacturing_labels_buffer = None
     
-    col1_g, col2_g, col3_g = st.columns(3)
+    col1, col2, col3 = st.columns(3)
     
-    with col1_g:
+    with col1:
         if st.button("📦 Manufacturing Labels", use_container_width=True):
             with st.spinner("Generating manufacturing labels..."):
                 pdf_data = generate_manufacturing_labels(df)
@@ -1256,7 +1171,7 @@ if uploaded:
                 use_container_width=True
             )
     
-    with col2_g:
+    with col2:
         gift_count = len(df[df['Gift Message'] != ""])
         if st.button(f"💌 Gift Messages ({gift_count})", use_container_width=True):
             with st.spinner("Generating gift message labels..."):
@@ -1270,7 +1185,7 @@ if uploaded:
                 use_container_width=True
             )
     
-    with col3_g:
+    with col3:
         if st.button("📊 Summary Report", use_container_width=True):
             with st.spinner("Generating summary report..."):
                 summary_stats = {
@@ -1300,7 +1215,7 @@ if uploaded:
             )
     
     # --------------------------------------
-    # Label Merging Section with anchor (updated for manual control + names)
+    # Label Merging Section with anchor
     # --------------------------------------
     st.markdown("---")
     st.markdown('<a id="label-merge"></a>', unsafe_allow_html=True)
@@ -1310,10 +1225,9 @@ if uploaded:
     **Instructions for Label Merging:**
     1. Generate Manufacturing Labels above (click the button)
     2. Upload your shipping labels PDF from Amazon/UPS
-    3. Uncheck manifest or extra pages
-    4. Click merge to create a combined PDF
-
-    ✨ Now each shipping page shows the **suggested buyer + order ID** based on the order table.
+    3. Click merge to create a combined PDF
+    
+    ✨ **Version 10.1:** Fixed label ordering for multi-item orders!
     """)
     
     shipping_labels_upload = st.file_uploader(
@@ -1324,97 +1238,43 @@ if uploaded:
     )
     
     if shipping_labels_upload and st.session_state.manufacturing_labels_buffer:
-        # Prepare / cache shipping page snippets for selection
-        if 'shipping_page_snippets' not in st.session_state or \
-           st.session_state.get('shipping_labels_name') != shipping_labels_upload.name:
-            shipping_labels_upload.seek(0)
-            snippets = get_shipping_page_snippets(shipping_labels_upload)
-            st.session_state.shipping_page_snippets = snippets
-            st.session_state.shipping_labels_name = shipping_labels_upload.name
-            st.session_state.shipping_page_selection = [True] * len(snippets)
-
-        snippets = st.session_state.shipping_page_snippets
-        selections = st.session_state.shipping_page_selection
-
-        st.markdown("### 🧾 Shipping Label Pages")
-        st.write("Uncheck pages that are **not real labels** (for example, manifest pages or summaries).")
-
-        for i, snippet in enumerate(snippets):
-            cols = st.columns([0.1, 0.9])
-            with cols[0]:
-                checked = st.checkbox(
-                    f"Use page {i+1}",
-                    value=selections[i],
-                    key=f"ship_page_{i}"
-                )
-                selections[i] = checked
-            with cols[1]:
-                st.markdown(f"**Page {i+1}**")
-
-                # Suggested order from manufacturing labels / order table
-                if i < len(order_preview_info):
-                    info = order_preview_info[i]
-                    st.markdown(
-                        f"Suggested order: **{info['buyer']}**  "
-                        f"(`{info['order_id']}`) – {info['items']} item(s)"
-                    )
-                else:
-                    st.markdown("_No matching order (extra page, probably manifest / summary)_")
-
-                st.code(snippet or "(no text found)", language="text")
-
-        st.session_state.shipping_page_selection = selections
-
-        selected_indices = [i for i, use in enumerate(selections) if use]
-
-        st.markdown("---")
         col_merge1, col_merge2 = st.columns([3, 1])
-
-        with col_merge2:
-            num_orders = df['Order ID'].nunique()
-            st.metric("Unique Orders", num_orders)
-            st.metric("Selected Ship Pages", len(selected_indices))
-            mfg_page_count = len(PdfReader(st.session_state.manufacturing_labels_buffer).pages)
-            st.metric("Mfg Label Pages", mfg_page_count)
-
+        
         with col_merge1:
             if st.button("🔀 Merge Labels Now", type="primary", use_container_width=True):
-                if len(selected_indices) == 0:
-                    st.error("❌ Please select at least one shipping label page.")
-                else:
-                    with st.spinner("Merging shipping and manufacturing labels..."):
-                        shipping_labels_upload.seek(0)
-                        st.session_state.manufacturing_labels_buffer.seek(0)
-
-                        merged_pdf, num_shipping, num_manufacturing = merge_shipping_and_manufacturing_labels(
-                            shipping_labels_upload,
-                            st.session_state.manufacturing_labels_buffer,
-                            df,
-                            selected_indices
+                with st.spinner("Merging shipping and manufacturing labels..."):
+                    shipping_labels_upload.seek(0)
+                    st.session_state.manufacturing_labels_buffer.seek(0)
+                    
+                    merged_pdf, num_shipping, num_manufacturing = merge_shipping_and_manufacturing_labels(
+                        shipping_labels_upload,
+                        st.session_state.manufacturing_labels_buffer,
+                        df
+                    )
+                    
+                    if merged_pdf:
+                        st.success(f"✅ Successfully merged {num_shipping} shipping labels with {num_manufacturing} manufacturing labels!")
+                        
+                        multi_item_orders = df.groupby('Order ID').size()
+                        multi_item_orders = multi_item_orders[multi_item_orders > 1]
+                        
+                        if len(multi_item_orders) > 0:
+                            with st.expander(f"ℹ️ Found {len(multi_item_orders)} order(s) with multiple items"):
+                                for order_id, count in multi_item_orders.items():
+                                    buyer = df[df['Order ID'] == order_id]['Buyer Name'].iloc[0]
+                                    st.write(f"• {buyer} ({order_id}): {count} blankets")
+                        
+                        st.download_button(
+                            label="⬇️ Download Merged Labels PDF",
+                            data=merged_pdf,
+                            file_name="Merged_Shipping_Manufacturing_Labels.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
                         )
-
-                        if merged_pdf:
-                            st.success(
-                                f"✅ Successfully merged {num_shipping} shipping labels "
-                                f"with {num_manufacturing} manufacturing labels!"
-                            )
-
-                            multi_item_orders = df.groupby('Order ID').size()
-                            multi_item_orders = multi_item_orders[multi_item_orders > 1]
-
-                            if len(multi_item_orders) > 0:
-                                with st.expander(f"ℹ️ Found {len(multi_item_orders)} order(s) with multiple items"):
-                                    for order_id, count in multi_item_orders.items():
-                                        buyer = df[df['Order ID'] == order_id]['Buyer Name'].iloc[0]
-                                        st.write(f"• {buyer} ({order_id}): {count} blankets")
-
-                            st.download_button(
-                                label="⬇️ Download Merged Labels PDF",
-                                data=merged_pdf,
-                                file_name="Merged_Shipping_Manufacturing_Labels.pdf",
-                                mime="application/pdf",
-                                use_container_width=True
-                            )
+        
+        with col_merge2:
+            st.metric("Total Orders", df['Order ID'].nunique())
+            st.metric("Total Items", len(df))
     
     elif shipping_labels_upload and not st.session_state.manufacturing_labels_buffer:
         st.warning("⚠️ Please generate Manufacturing Labels first (click the button above)")
