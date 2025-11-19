@@ -1003,7 +1003,7 @@ with st.sidebar:
     st.markdown("✓ Label Generation")
     st.markdown("✓ Order Merging")
     st.markdown("✓ Cloud Sync")
-    st.markmarkdown("✓ Spanish Translation")  # <-- if this line errors, change to st.markdown
+    st.markdown("✓ Spanish Translation")
     st.markdown("✓ Duplicate Detection")
     
     st.markdown("---")
@@ -1163,19 +1163,19 @@ if uploaded:
     st.markdown('<a id="dashboard"></a>', unsafe_allow_html=True)
     st.markdown("## 📊 Order Dashboard")
     
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1_m, col2_m, col3_m, col4_m, col5_m, col6_m = st.columns(6)
     
-    with col1:
+    with col1_m:
         st.metric("Total Blankets", total_blankets)
-    with col2:
+    with col2_m:
         st.metric("Total Orders", total_orders)
-    with col3:
+    with col3_m:
         st.metric("Beanies", total_beanies)
-    with col4:
+    with col4_m:
         st.metric("Gift Boxes", gift_boxes_needed)
-    with col5:
+    with col5_m:
         st.metric("Gift Messages", gift_messages_needed)
-    with col6:
+    with col6_m:
         st.metric("Unique Colors", len(blanket_color_counts))
     
     col7, col8 = st.columns(2)
@@ -1240,9 +1240,9 @@ if uploaded:
     if 'manufacturing_labels_buffer' not in st.session_state:
         st.session_state.manufacturing_labels_buffer = None
     
-    col1, col2, col3 = st.columns(3)
+    col1_g, col2_g, col3_g = st.columns(3)
     
-    with col1:
+    with col1_g:
         if st.button("📦 Manufacturing Labels", use_container_width=True):
             with st.spinner("Generating manufacturing labels..."):
                 pdf_data = generate_manufacturing_labels(df)
@@ -1256,7 +1256,7 @@ if uploaded:
                 use_container_width=True
             )
     
-    with col2:
+    with col2_g:
         gift_count = len(df[df['Gift Message'] != ""])
         if st.button(f"💌 Gift Messages ({gift_count})", use_container_width=True):
             with st.spinner("Generating gift message labels..."):
@@ -1270,7 +1270,7 @@ if uploaded:
                 use_container_width=True
             )
     
-    with col3:
+    with col3_g:
         if st.button("📊 Summary Report", use_container_width=True):
             with st.spinner("Generating summary report..."):
                 summary_stats = {
