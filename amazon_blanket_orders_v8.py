@@ -8,7 +8,6 @@ from reportlab.lib.pagesizes import inch, landscape
 from reportlab.lib import colors
 import requests
 from pypdf import PdfReader, PdfWriter
-from rapidfuzz import fuzz
 
 # --------------------------------------
 # Page Configuration
@@ -374,282 +373,59 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
     canvas_obj.restoreState()
 
 # --------------------------------------
-# IMPROVED Label Merging Function with Name Matching
+# FIXED: Label Merging Function
 # --------------------------------------
 def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pdf_bytes, order_dataframe):
     """
-    Improved merge function that matches by buyer name instead of position.
-    Handles cases where some shipping labels are missing.
+    Merge shipping labels with manufacturing labels.
+    Handles orders with multiple items (one shipping label, multiple manufacturing labels).
     """
     try:
-        # Helper functions for name extraction
-        def extract_name_from_shipping_label(text):
-            """Extract buyer name from shipping label text"""
-            lines = text.split('\n')
-            
-            # Look for "SHIP TO:" pattern (UPS)
-            for i, line in enumerate(lines):
-                if 'SHIP TO:' in line.upper():
-                    j = i + 1
-                    while j < len(lines) and not lines[j].strip():
-                        j += 1
-                    if j < len(lines):
-                        name = lines[j].strip()
-                        if is_valid_name(name):
-                            return clean_name(name)
-            
-            # Look for USPS format (SHIP\nTO:)
-            for i in range(len(lines) - 1):
-                current = lines[i].strip()
-                next_line = lines[i + 1].strip() if i + 1 < len(lines) else ""
-                
-                if 'SHIP' in current.upper():
-                    if next_line.upper().startswith('TO:'):
-                        if ':' in next_line:
-                            parts = next_line.split(':', 1)
-                            name = parts[1].strip()
-                            if name and is_valid_name(name):
-                                return clean_name(name)
-                        if i + 2 < len(lines):
-                            name = lines[i + 2].strip()
-                            if is_valid_name(name):
-                                return clean_name(name)
-            
-            # Look for FedEx format (TO or TOMary)
-            for line in lines:
-                line = line.strip()
-                if line.upper().startswith('TO'):
-                    # Handle "TOMary Mack" format
-                    if len(line) > 2:
-                        potential_name = line[2:].strip()
-                        if is_valid_name(potential_name):
-                            return clean_name(potential_name)
-            
-            return None
+        shipping_pdf = PdfReader(shipping_pdf_bytes)
+        manufacturing_pdf = PdfReader(manufacturing_pdf_bytes)
         
-        def is_valid_name(text):
-            """Check if text could be a person's name"""
-            if not text or len(text) < 3:
-                return False
-            
-            # Must have letters
-            if not re.search(r'[A-Za-z]', text):
-                return False
-            
-            # Skip addresses (start with numbers)
-            if re.match(r'^\d+\s+', text):
-                return False
-            
-            # Skip if ends with ZIP
-            if re.search(r'\b\d{5}(?:-\d{4})?\s*$', text):
-                return False
-            
-            # Skip state + zip
-            if re.match(r'^[A-Z]{2}\s+\d{5}', text.upper()):
-                return False
-            
-            # Skip common non-names
-            exclude = ['TRACKING', 'USPS', 'UPS', 'FEDEX', 'PRIORITY', 
-                      'GROUND', 'EXPRESS', 'FAIRFIELD', 'UNITED STATES']
-            
-            text_upper = text.upper()
-            for term in exclude:
-                if term in text_upper:
-                    return False
-            
-            # Skip street names
-            street_endings = [' AVE', ' ST', ' RD', ' DR', ' BLVD', ' PL', ' WAY', ' LN']
-            for ending in street_endings:
-                if text_upper.endswith(ending):
-                    return False
-            
-            return True
-        
-        def clean_name(name):
-            """Normalize name for matching"""
-            # Remove titles
-            name = re.sub(r'\b(MR|MRS|MS|DR|JR|SR|III|II)\.?\b', '', name, flags=re.IGNORECASE)
-            # Remove special chars
-            name = re.sub(r'[^\w\s\-]', '', name)
-            # Normalize whitespace
-            name = ' '.join(name.split())
-            return name.upper().strip()
-        
-        # Parse shipping labels and extract names
-        shipping_info = []
-        with pdfplumber.open(BytesIO(shipping_pdf_bytes)) as pdf:
-            for page_num, page in enumerate(pdf.pages):
-                text = page.extract_text() or ""
-                name = extract_name_from_shipping_label(text)
-                shipping_info.append({
-                    'page': page_num,
-                    'buyer_name': name,
-                    'matched': False
-                })
-                if not name:
-                    st.warning(f"⚠️ Could not extract name from shipping label page {page_num + 1}")
-        
-        # Get unique orders from dataframe
-        orders = []
+        # CRITICAL FIX: Preserve the order of orders as they appear in the dataframe
         seen_orders = []
+        order_item_counts = []
+        
         for order_id in order_dataframe['Order ID']:
             if order_id not in seen_orders:
                 seen_orders.append(order_id)
-                order_data = order_dataframe[order_dataframe['Order ID'] == order_id]
-                buyer_name = clean_name(order_data.iloc[0]['Buyer Name'])
-                orders.append({
-                    'order_id': order_id,
-                    'buyer_name': buyer_name,
-                    'item_count': len(order_data),
-                    'original_buyer': order_data.iloc[0]['Buyer Name']
-                })
+                item_count = len(order_dataframe[order_dataframe['Order ID'] == order_id])
+                order_item_counts.append(item_count)
         
-        # Match orders to shipping labels using fuzzy matching
-        matched_pairs = []
-        unmatched_orders = []
+        # Build mapping: shipping label index -> list of manufacturing label indices
+        shipping_to_mfg = {}
+        mfg_index = 0
         
-        for order in orders:
-            best_match = None
-            best_score = 0
-            best_index = -1
-            
-            for i, ship_info in enumerate(shipping_info):
-                if ship_info['matched'] or not ship_info['buyer_name']:
-                    continue
-                
-                # Calculate fuzzy match score
-                score = fuzz.ratio(order['buyer_name'], ship_info['buyer_name'])
-                token_score = fuzz.token_sort_ratio(order['buyer_name'], ship_info['buyer_name'])
-                partial_score = fuzz.partial_ratio(order['buyer_name'], ship_info['buyer_name'])
-                
-                final_score = max(score, token_score, partial_score)
-                
-                if final_score > best_score:
-                    best_score = final_score
-                    best_match = ship_info
-                    best_index = i
-            
-            # Match threshold of 80%
-            if best_match and best_score >= 80:
-                shipping_info[best_index]['matched'] = True
-                matched_pairs.append({
-                    'order': order,
-                    'shipping_page': best_match['page'],
-                    'confidence': best_score
-                })
-            else:
-                unmatched_orders.append(order)
-        
-        # Build page mappings
-        mfg_page_index = {}
-        current_page = 0
-        for order_id in seen_orders:
-            item_count = len(order_dataframe[order_dataframe['Order ID'] == order_id])
-            mfg_page_index[order_id] = list(range(current_page, current_page + item_count))
-            current_page += item_count
+        for shipping_index, item_count in enumerate(order_item_counts):
+            shipping_to_mfg[shipping_index] = list(range(mfg_index, mfg_index + item_count))
+            mfg_index += item_count
         
         # Create merged PDF
-        shipping_pdf = PdfReader(BytesIO(shipping_pdf_bytes))
-        manufacturing_pdf = PdfReader(BytesIO(manufacturing_pdf_bytes))
+        output_pdf = PdfWriter()
+        total_shipping_labels = len(shipping_to_mfg)
         
-        merged_pdf = PdfWriter()
-        unmatched_pdf = PdfWriter()
-        
-        # Add matched pairs
-        merged_mfg_pages = set()
-        for match in matched_pairs:
-            order = match['order']
-            
-            # Add shipping label
-            merged_pdf.add_page(shipping_pdf.pages[match['shipping_page']])
-            
-            # Add corresponding manufacturing labels
-            if order['order_id'] in mfg_page_index:
-                for mfg_page in mfg_page_index[order['order_id']]:
-                    merged_pdf.add_page(manufacturing_pdf.pages[mfg_page])
-                    merged_mfg_pages.add(mfg_page)
-        
-        # Add unmatched manufacturing labels to separate PDF
-        for page_num in range(len(manufacturing_pdf.pages)):
-            if page_num not in merged_mfg_pages:
-                unmatched_pdf.add_page(manufacturing_pdf.pages[page_num])
-        
-        # Report results
-        if unmatched_orders:
-            st.warning(f"⚠️ {len(unmatched_orders)} orders without matching shipping labels:")
-            with st.expander("View unmatched orders"):
-                for order in unmatched_orders:
-                    st.write(f"• {order['original_buyer']} (Order: {order['order_id']})")
-            
-            # Create unmatched PDF if there are unmatched pages
-            if len(unmatched_pdf.pages) > 0:
-                unmatched_buffer = BytesIO()
-                unmatched_pdf.write(unmatched_buffer)
-                unmatched_buffer.seek(0)
+        for ship_idx in range(total_shipping_labels):
+            if ship_idx >= len(shipping_pdf.pages):
+                break
                 
-                st.download_button(
-                    label="⬇️ Download Unmatched Manufacturing Labels",
-                    data=unmatched_buffer.read(),
-                    file_name="Unmatched_Manufacturing_Labels.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                    key="unmatched_download"
-                )
+            output_pdf.add_page(shipping_pdf.pages[ship_idx])
+            
+            if ship_idx in shipping_to_mfg:
+                for mfg_idx in shipping_to_mfg[ship_idx]:
+                    if mfg_idx < len(manufacturing_pdf.pages):
+                        output_pdf.add_page(manufacturing_pdf.pages[mfg_idx])
         
-        # Convert merged PDF to bytes
         output_buffer = BytesIO()
-        merged_pdf.write(output_buffer)
+        output_pdf.write(output_buffer)
         output_buffer.seek(0)
         
-        return output_buffer, len(matched_pairs), sum(p['order']['item_count'] for p in matched_pairs)
+        return output_buffer, len(shipping_to_mfg), sum(len(v) for v in shipping_to_mfg.values())
         
     except Exception as e:
-        st.error(f"Error in improved merge: {str(e)}")
-        st.info("Falling back to original merge method...")
-        
-        # Fallback to original simple merge if there's an error
-        try:
-            shipping_pdf = PdfReader(shipping_pdf_bytes)
-            manufacturing_pdf = PdfReader(manufacturing_pdf_bytes)
-            
-            seen_orders = []
-            order_item_counts = []
-            
-            for order_id in order_dataframe['Order ID']:
-                if order_id not in seen_orders:
-                    seen_orders.append(order_id)
-                    item_count = len(order_dataframe[order_dataframe['Order ID'] == order_id])
-                    order_item_counts.append(item_count)
-            
-            shipping_to_mfg = {}
-            mfg_index = 0
-            
-            for shipping_index, item_count in enumerate(order_item_counts):
-                shipping_to_mfg[shipping_index] = list(range(mfg_index, mfg_index + item_count))
-                mfg_index += item_count
-            
-            output_pdf = PdfWriter()
-            
-            for ship_idx in range(len(shipping_to_mfg)):
-                if ship_idx >= len(shipping_pdf.pages):
-                    break
-                    
-                output_pdf.add_page(shipping_pdf.pages[ship_idx])
-                
-                if ship_idx in shipping_to_mfg:
-                    for mfg_idx in shipping_to_mfg[ship_idx]:
-                        if mfg_idx < len(manufacturing_pdf.pages):
-                            output_pdf.add_page(manufacturing_pdf.pages[mfg_idx])
-            
-            output_buffer = BytesIO()
-            output_pdf.write(output_buffer)
-            output_buffer.seek(0)
-            
-            return output_buffer, len(shipping_to_mfg), sum(len(v) for v in shipping_to_mfg.values())
-            
-        except Exception as fallback_error:
-            st.error(f"Both merge methods failed: {str(fallback_error)}")
-            return None, 0, 0
+        st.error(f"Error merging labels: {str(e)}")
+        return None, 0, 0
 
 # --------------------------------------
 # Airtable Functions
@@ -1134,7 +910,7 @@ def generate_summary_pdf(dataframe, summary_stats):
 # --------------------------------------
 with st.sidebar:
     st.markdown("# 🧵 Blanket Manager")
-    st.markdown("### Version 11.0 - Improved")
+    st.markdown("### Version 10.1 Dark")
     st.markdown("---")
     
     st.markdown("#### 📋 Quick Navigation")
@@ -1153,8 +929,7 @@ with st.sidebar:
     st.markdown("#### ✨ Features")
     st.markdown("✓ PDF Parsing")
     st.markdown("✓ Label Generation")
-    st.markdown("✓ Smart Name Matching")
-    st.markdown("✓ Missing Label Detection")
+    st.markdown("✓ Order Merging")
     st.markdown("✓ Cloud Sync")
     st.markdown("✓ Spanish Translation")
     st.markdown("✓ Duplicate Detection")
@@ -1169,7 +944,7 @@ st.title("🧵 Amazon Blanket Order Manager")
 
 st.markdown("""
 **Professional order processing & label generation system**  
-Parse Amazon PDFs • Generate labels • Smart merge • Sync to Airtable
+Parse Amazon PDFs • Generate labels • Merge shipments • Sync to Airtable
 """)
 
 st.markdown("---")
@@ -1452,7 +1227,7 @@ if uploaded:
     2. Upload your shipping labels PDF from Amazon/UPS
     3. Click merge to create a combined PDF
     
-    ✨ **Version 11.0:** Smart name matching - handles missing shipping labels!
+    ✨ **Version 10.1:** Fixed label ordering for multi-item orders!
     """)
     
     shipping_labels_upload = st.file_uploader(
@@ -1471,17 +1246,9 @@ if uploaded:
                     shipping_labels_upload.seek(0)
                     st.session_state.manufacturing_labels_buffer.seek(0)
                     
-                    # Read both PDFs into bytes
-                    shipping_pdf_bytes = shipping_labels_upload.read()
-                    manufacturing_pdf_bytes = st.session_state.manufacturing_labels_buffer.read()
-                    
-                    # Reset buffers for potential reuse
-                    shipping_labels_upload.seek(0)
-                    st.session_state.manufacturing_labels_buffer.seek(0)
-                    
                     merged_pdf, num_shipping, num_manufacturing = merge_shipping_and_manufacturing_labels(
-                        shipping_pdf_bytes,
-                        manufacturing_pdf_bytes,
+                        shipping_labels_upload,
+                        st.session_state.manufacturing_labels_buffer,
                         df
                     )
                     
@@ -1548,7 +1315,7 @@ if uploaded:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #a0aec0; padding: 20px;'>
-    <p><strong>Amazon Blanket Order Manager v11.0 - Improved</strong></p>
-    <p>Professional order processing with smart label matching</p>
+    <p><strong>Amazon Blanket Order Manager v10.1 Dark</strong></p>
+    <p>Professional order processing & label generation system</p>
 </div>
 """, unsafe_allow_html=True)
