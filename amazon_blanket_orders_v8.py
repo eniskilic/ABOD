@@ -27,16 +27,13 @@ st.set_page_config(
 # --------------------------------------
 st.markdown("""
 <style>
-    /* 1. IMPORT FONTS (Elegant Serif + Clean Sans) */
     @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Lato:wght@400;700&display=swap');
 
-    /* 2. MAIN BACKGROUND - Warm Cream/Beige */
     .stApp {
         background-color: #FDFBF7;
         color: #4A4A4A;
     }
     
-    /* 3. SIDEBAR - Slightly Darker Warm Tone */
     [data-testid="stSidebar"] {
         background-color: #F4F1EA;
         border-right: 1px solid #E6E2D8;
@@ -45,7 +42,6 @@ st.markdown("""
         color: #5D5D5D;
     }
 
-    /* 4. TYPOGRAPHY */
     h1, h2, h3 {
         font-family: 'Playfair Display', serif !important;
         color: #2C3E50;
@@ -55,12 +51,11 @@ st.markdown("""
         color: #4A4A4A;
     }
 
-    /* 5. BUTTONS - Sage Green (Primary) */
     .stButton button {
         background-color: #8DA399 !important;
         color: white !important;
         border: none;
-        border-radius: 20px; /* Soft rounds */
+        border-radius: 20px;
         padding: 12px 24px;
         font-weight: 600;
         box-shadow: 0 2px 5px rgba(0,0,0,0.05);
@@ -72,17 +67,16 @@ st.markdown("""
         box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
 
-    /* 6. METRIC CARDS - White with Dusty Rose Border */
     [data-testid="stMetric"] {
         background-color: #FFFFFF;
         border: 1px solid #E6E2D8;
-        border-left: 5px solid #D4A5A5; /* Dusty Rose Accent */
+        border-left: 5px solid #D4A5A5;
         padding: 15px;
         border-radius: 12px;
         box-shadow: 0 2px 6px rgba(0,0,0,0.03);
     }
     [data-testid="stMetric"] label {
-        color: #8DA399 !important; /* Sage Text */
+        color: #8DA399 !important;
         font-weight: bold;
     }
     [data-testid="stMetric"] [data-testid="stMetricValue"] {
@@ -90,7 +84,6 @@ st.markdown("""
         font-family: 'Playfair Display', serif;
     }
 
-    /* 7. FILE UPLOADER - Boutique Style */
     [data-testid="stFileUploader"] {
         background-color: #FFFFFF;
         border: 2px dashed #D4A5A5;
@@ -101,14 +94,12 @@ st.markdown("""
         background-color: #FAFAFA;
     }
 
-    /* 8. TABLES/DATAFRAME - Clean & Airy */
     [data-testid="stDataFrame"] {
         border: 1px solid #E6E2D8;
         border-radius: 10px;
         background-color: white;
     }
     
-    /* 9. ALERTS - Soft Colors */
     .stSuccess {
         background-color: #E8F5E9;
         border-left: 5px solid #8DA399;
@@ -120,7 +111,6 @@ st.markdown("""
         color: #C62828;
     }
     
-    /* 10. Status Indicator in Sidebar */
     .status-indicator {
         display: inline-flex;
         align-items: center;
@@ -549,7 +539,7 @@ def generate_summary_pdf(dataframe, summary_stats):
 # --------------------------------------
 with st.sidebar:
     st.title("🧵 Blanket Manager")
-    st.markdown("### v10.6 (Artisan Theme)")
+    st.markdown("### v10.7 (Artisan Theme)")
     st.markdown("---")
     st.markdown('<a href="#upload-order" class="nav-link">📄 Upload Order</a>', unsafe_allow_html=True)
     st.markdown('<a href="#dashboard" class="nav-link">📊 Dashboard</a>', unsafe_allow_html=True)
@@ -617,6 +607,7 @@ if uploaded:
         df['Quantity_Int'] = df['Quantity'].astype(int)
         total_blankets = df['Quantity_Int'].sum()
         total_beanies = df[df['Include Beanie'] == 'YES']['Quantity_Int'].sum()
+        gift_count = len(df[df['Gift Message'] != ""]) # Calculate here for button
         blanket_counts = df.groupby('Blanket Color')['Quantity_Int'].sum().sort_values(ascending=False)
         thread_counts = df.groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
         
@@ -658,7 +649,7 @@ if uploaded:
                 st.download_button("⬇️ Download Mfg Labels", st.session_state.manufacturing_labels_buffer, "Manufacturing_Labels.pdf", "application/pdf", use_container_width=True)
         
         with c2:
-            if st.button("💌 Gift Messages", use_container_width=True):
+            if st.button(f"💌 Gift Messages ({gift_count})", use_container_width=True):
                 pdf = generate_gift_message_labels(df)
                 st.session_state.gift_pdf = pdf
                 st.success("Generated!")
