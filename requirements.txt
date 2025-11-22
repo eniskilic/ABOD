@@ -2,8 +2,8 @@ streamlit
 pdfplumber
 pandas
 reportlab
-pyairtable
+requests
 pypdf
-rapidfuzz
-
-
+pdf2image
+pytesseract
+Pillow
