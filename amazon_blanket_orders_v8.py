@@ -23,86 +23,121 @@ st.set_page_config(
 )
 
 # --------------------------------------
-# Dark Mode Custom CSS Styling (Restored from V10.1)
+# 🎨 ARTISAN WORKSHOP UI THEME
 # --------------------------------------
 st.markdown("""
 <style>
-    /* Dark Mode Base */
-    .main { background: #0f1419; color: #e4e6eb; }
-    .stApp { background: #0f1419; }
-    
-    /* Sidebar Dark Styling */
-    [data-testid="stSidebar"] { background: #1a1f2e; border-right: 1px solid #2d3748; }
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] { color: #e4e6eb; }
-    
-    /* Metric Cards Dark */
-    [data-testid="stMetric"] {
-        background: linear-gradient(135deg, #1e2432 0%, #252d3d 100%);
-        border: 1px solid #2d3748;
-        padding: 25px 20px;
-        border-radius: 16px;
-        border-left: 3px solid #667eea;
+    /* 1. IMPORT FONTS (Elegant Serif + Clean Sans) */
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Lato:wght@400;700&display=swap');
+
+    /* 2. MAIN BACKGROUND - Warm Cream/Beige */
+    .stApp {
+        background-color: #FDFBF7;
+        color: #4A4A4A;
     }
-    [data-testid="stMetric"]:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 10px 30px rgba(102, 126, 234, 0.2);
-        border-color: #667eea;
-    }
-    [data-testid="stMetric"] label { color: #a0aec0 !important; }
-    [data-testid="stMetric"] [data-testid="stMetricValue"] { color: #e4e6eb !important; }
     
-    /* Buttons Dark */
+    /* 3. SIDEBAR - Slightly Darker Warm Tone */
+    [data-testid="stSidebar"] {
+        background-color: #F4F1EA;
+        border-right: 1px solid #E6E2D8;
+    }
+    [data-testid="stSidebar"] .stMarkdown {
+        color: #5D5D5D;
+    }
+
+    /* 4. TYPOGRAPHY */
+    h1, h2, h3 {
+        font-family: 'Playfair Display', serif !important;
+        color: #2C3E50;
+    }
+    p, div, span, label {
+        font-family: 'Lato', sans-serif;
+        color: #4A4A4A;
+    }
+
+    /* 5. BUTTONS - Sage Green (Primary) */
     .stButton button {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
+        background-color: #8DA399 !important;
+        color: white !important;
         border: none;
-        border-radius: 10px;
+        border-radius: 20px; /* Soft rounds */
         padding: 12px 24px;
         font-weight: 600;
-        width: 100%;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        transition: all 0.3s ease;
     }
     .stButton button:hover {
+        background-color: #7A8F85 !important;
         transform: translateY(-2px);
-        box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
-    
-    /* File Uploader Dark */
-    [data-testid="stFileUploader"] {
-        background: #1a1f2e;
-        padding: 40px;
+
+    /* 6. METRIC CARDS - White with Dusty Rose Border */
+    [data-testid="stMetric"] {
+        background-color: #FFFFFF;
+        border: 1px solid #E6E2D8;
+        border-left: 5px solid #D4A5A5; /* Dusty Rose Accent */
+        padding: 15px;
         border-radius: 12px;
-        border: 2px dashed #2d3748;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.03);
     }
-    [data-testid="stFileUploader"] label { color: #e4e6eb !important; }
+    [data-testid="stMetric"] label {
+        color: #8DA399 !important; /* Sage Text */
+        font-weight: bold;
+    }
+    [data-testid="stMetric"] [data-testid="stMetricValue"] {
+        color: #2C3E50 !important;
+        font-family: 'Playfair Display', serif;
+    }
+
+    /* 7. FILE UPLOADER - Boutique Style */
+    [data-testid="stFileUploader"] {
+        background-color: #FFFFFF;
+        border: 2px dashed #D4A5A5;
+        border-radius: 15px;
+        padding: 30px;
+    }
+    [data-testid="stFileUploader"] section {
+        background-color: #FAFAFA;
+    }
+
+    /* 8. TABLES/DATAFRAME - Clean & Airy */
+    [data-testid="stDataFrame"] {
+        border: 1px solid #E6E2D8;
+        border-radius: 10px;
+        background-color: white;
+    }
     
-    /* Dataframe Dark */
-    [data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
+    /* 9. ALERTS - Soft Colors */
+    .stSuccess {
+        background-color: #E8F5E9;
+        border-left: 5px solid #8DA399;
+        color: #2E7D32;
+    }
+    .stError {
+        background-color: #FFEBEE;
+        border-left: 5px solid #D4A5A5;
+        color: #C62828;
+    }
     
-    /* Text color overrides */
-    p, span, div { color: #cbd5e0; }
-    strong { color: #e4e6eb; }
-    hr { border-top: 1px solid #2d3748; margin: 40px 0; }
-    
-    /* Status Indicator */
+    /* 10. Status Indicator in Sidebar */
     .status-indicator {
         display: inline-flex;
         align-items: center;
         gap: 8px;
-        background: #2d3748;
-        padding: 6px 12px;
+        background: #FFFFFF;
+        padding: 8px 16px;
         border-radius: 20px;
-        font-size: 0.85em;
+        border: 1px solid #E6E2D8;
+        font-size: 0.9em;
+        color: #8DA399;
+        font-weight: bold;
     }
     .status-dot {
         width: 8px;
         height: 8px;
-        background: #48bb78;
+        background: #8DA399;
         border-radius: 50%;
-        animation: pulse 2s infinite;
-    }
-    @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -161,7 +196,107 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
     canvas_obj.restoreState()
 
 # --------------------------------------
-# Airtable Functions
+# CORE LOGIC: Robust Label Merging (V3 - With Alerts)
+# --------------------------------------
+def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pdf_bytes, order_dataframe):
+    try:
+        # 1. Index Manufacturing Labels
+        mfg_reader = PdfReader(manufacturing_pdf_bytes)
+        mfg_map = {} 
+        current_mfg_page_idx = 0
+        
+        for _, row in order_dataframe.iterrows():
+            raw_name = str(row['Buyer Name']).strip().upper()
+            raw_name = " ".join(raw_name.split()) # Clean spaces
+            
+            if raw_name not in mfg_map:
+                mfg_map[raw_name] = []
+            
+            if current_mfg_page_idx < len(mfg_reader.pages):
+                mfg_map[raw_name].append(mfg_reader.pages[current_mfg_page_idx])
+                current_mfg_page_idx += 1
+
+        known_buyers = list(mfg_map.keys())
+        qc_tracker = {name: "❌ MISSING" for name in known_buyers}
+
+        # 2. Process Shipping Labels
+        output_pdf = PdfWriter()
+        shipping_pdf_bytes.seek(0)
+        
+        processed_count = 0
+        matched_count = 0
+        
+        with pdfplumber.open(shipping_pdf_bytes) as plist:
+            ship_reader = PdfReader(shipping_pdf_bytes)
+            
+            for i, page in enumerate(plist.pages):
+                # Extract Text
+                text = page.extract_text() or ""
+                text = text.upper()
+                
+                found_name = None
+                
+                # Strategy A: Look for "SHIP TO"
+                ship_to_match = re.search(r"SHIP\s*TO:?\s*\n+([^\n]+)", text)
+                if ship_to_match:
+                    candidate = ship_to_match.group(1).strip()
+                    matches = get_close_matches(candidate, known_buyers, n=1, cutoff=0.8)
+                    if matches: found_name = matches[0]
+
+                # Strategy B: Scan full text
+                if not found_name:
+                    for buyer in known_buyers:
+                        if buyer in text:
+                            found_name = buyer
+                            break
+                
+                # Strategy C: OCR Fallback
+                if not found_name and len(text) < 50: 
+                    try:
+                        images = convert_from_bytes(shipping_pdf_bytes.getvalue(), first_page=i+1, last_page=i+1, dpi=150)
+                        if images:
+                            ocr_text = pytesseract.image_to_string(images[0]).upper()
+                            for buyer in known_buyers:
+                                if buyer in ocr_text:
+                                    found_name = buyer
+                                    break
+                    except: pass
+
+                # Construct PDF
+                output_pdf.add_page(ship_reader.pages[i])
+                processed_count += 1
+                
+                if found_name and found_name in mfg_map:
+                    pages_to_add = mfg_map[found_name]
+                    for p in pages_to_add:
+                        output_pdf.add_page(p)
+                        matched_count += 1
+                    qc_tracker[found_name] = f"✅ MATCHED (Pg {i+1})"
+                    del mfg_map[found_name]
+
+        # 3. Handle Orphans
+        if len(mfg_map) > 0:
+            for buyer, pages in mfg_map.items():
+                for p in pages:
+                    output_pdf.add_page(p)
+
+        output_buffer = BytesIO()
+        output_pdf.write(output_buffer)
+        output_buffer.seek(0)
+        
+        # Generate QC Dataframe
+        qc_data = [{"Buyer Name": name, "Status": status} for name, status in qc_tracker.items()]
+        qc_df = pd.DataFrame(qc_data)
+        qc_df = qc_df.sort_values(by="Status", ascending=False)
+        
+        return output_buffer, processed_count, matched_count, qc_df
+
+    except Exception as e:
+        st.error(f"Merge Error: {str(e)}")
+        return BytesIO(), 0, 0, pd.DataFrame()
+
+# --------------------------------------
+# Airtable & PDF Gen Functions
 # --------------------------------------
 def get_existing_order_ids():
     headers = {"Authorization": f"Bearer {AIRTABLE_PAT}", "Content-Type": "application/json"}
@@ -207,9 +342,7 @@ def upload_to_airtable(dataframe):
         except Exception as e: errors.append(str(e))
         progress.progress((i+1)/len(new))
     return orders_created, line_items_created, errors
-    # --------------------------------------
-# PDF Generation Functions (FULL VERBOSE VERSION)
-# --------------------------------------
+
 def generate_manufacturing_labels(dataframe):
     buf = BytesIO()
     page_size = landscape((4 * inch, 6 * inch))
@@ -239,11 +372,11 @@ def generate_manufacturing_labels(dataframe):
         
         c.setFont("Helvetica-Bold", 16)
         text_y = box_y + box_height - 0.24 * inch
-        c.drawString(left + 0.1 * inch, text_y, f"BLANKET COLOR: {str(row['Blanket Color']).upper()}")
+        c.drawString(left + 0.1 * inch, text_y, f"COLOR: {str(row['Blanket Color']).upper()}")
         
         text_y -= 0.32 * inch
         c.setFont("Helvetica-BoldOblique", 16)
-        c.drawString(left + 0.1 * inch, text_y, f"THREAD COLOR: {row['Thread Color']}")
+        c.drawString(left + 0.1 * inch, text_y, f"THREAD: {row['Thread Color']}")
         
         y = box_y - 0.3 * inch
 
@@ -412,108 +545,11 @@ def generate_summary_pdf(dataframe, summary_stats):
     return buf
 
 # --------------------------------------
-# CORE LOGIC: Merge & QC Dashboard
-# --------------------------------------
-def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pdf_bytes, order_dataframe):
-    try:
-        # 1. Index Manufacturing Labels
-        mfg_reader = PdfReader(manufacturing_pdf_bytes)
-        mfg_map = {} 
-        current_mfg_page_idx = 0
-        
-        for _, row in order_dataframe.iterrows():
-            raw_name = str(row['Buyer Name']).strip().upper()
-            raw_name = " ".join(raw_name.split()) # Clean spaces
-            
-            if raw_name not in mfg_map:
-                mfg_map[raw_name] = []
-            
-            if current_mfg_page_idx < len(mfg_reader.pages):
-                mfg_map[raw_name].append(mfg_reader.pages[current_mfg_page_idx])
-                current_mfg_page_idx += 1
-
-        known_buyers = list(mfg_map.keys())
-        qc_tracker = {name: "❌ MISSING" for name in known_buyers}
-
-        # 2. Process Shipping Labels
-        output_pdf = PdfWriter()
-        shipping_pdf_bytes.seek(0)
-        processed_count = 0
-        matched_count = 0
-        
-        with pdfplumber.open(shipping_pdf_bytes) as plist:
-            ship_reader = PdfReader(shipping_pdf_bytes)
-            
-            for i, page in enumerate(plist.pages):
-                text = page.extract_text() or ""
-                text = text.upper()
-                found_name = None
-                
-                # Strategy A: Look for "SHIP TO"
-                ship_to_match = re.search(r"SHIP\s*TO:?\s*\n+([^\n]+)", text)
-                if ship_to_match:
-                    candidate = ship_to_match.group(1).strip()
-                    matches = get_close_matches(candidate, known_buyers, n=1, cutoff=0.8)
-                    if matches: found_name = matches[0]
-
-                # Strategy B: Scan full text
-                if not found_name:
-                    for buyer in known_buyers:
-                        if buyer in text:
-                            found_name = buyer
-                            break
-                
-                # Strategy C: OCR Fallback
-                if not found_name and len(text) < 50: 
-                    try:
-                        images = convert_from_bytes(shipping_pdf_bytes.getvalue(), first_page=i+1, last_page=i+1, dpi=150)
-                        if images:
-                            ocr_text = pytesseract.image_to_string(images[0]).upper()
-                            for buyer in known_buyers:
-                                if buyer in ocr_text:
-                                    found_name = buyer
-                                    break
-                    except: pass
-
-                # Construct PDF
-                output_pdf.add_page(ship_reader.pages[i])
-                processed_count += 1
-                
-                if found_name and found_name in mfg_map:
-                    pages_to_add = mfg_map[found_name]
-                    for p in pages_to_add:
-                        output_pdf.add_page(p)
-                        matched_count += 1
-                    qc_tracker[found_name] = f"✅ MATCHED (Page {i+1})"
-                    del mfg_map[found_name]
-
-        # 3. Handle Orphans
-        if len(mfg_map) > 0:
-            for buyer, pages in mfg_map.items():
-                for p in pages:
-                    output_pdf.add_page(p)
-
-        output_buffer = BytesIO()
-        output_pdf.write(output_buffer)
-        output_buffer.seek(0)
-        
-        # Generate QC Dataframe
-        qc_data = [{"Buyer Name": name, "Status": status} for name, status in qc_tracker.items()]
-        qc_df = pd.DataFrame(qc_data)
-        qc_df = qc_df.sort_values(by="Status", ascending=False)
-        
-        return output_buffer, processed_count, matched_count, qc_df
-
-    except Exception as e:
-        st.error(f"Merge Error: {str(e)}")
-        return BytesIO(), 0, 0, pd.DataFrame()
-
-# --------------------------------------
 # MAIN APP INTERFACE
 # --------------------------------------
 with st.sidebar:
-    st.markdown("# 🧵 Blanket Manager")
-    st.markdown("### Version 10.5 (Fixed & Full)")
+    st.title("🧵 Blanket Manager")
+    st.markdown("### v10.6 (Artisan Theme)")
     st.markdown("---")
     st.markdown('<a href="#upload-order" class="nav-link">📄 Upload Order</a>', unsafe_allow_html=True)
     st.markdown('<a href="#dashboard" class="nav-link">📊 Dashboard</a>', unsafe_allow_html=True)
@@ -535,6 +571,7 @@ st.markdown("## 📄 Upload Order")
 uploaded = st.file_uploader("Drop your Amazon packing slip PDF here", type=["pdf"])
 
 if uploaded:
+    # Parse Logic
     records = []
     with pdfplumber.open(uploaded) as pdf:
         for page in pdf.pages:
@@ -546,6 +583,7 @@ if uploaded:
             blocks = re.split(r"(?=Customizations:)", text)
             for block in blocks:
                 if "Customizations:" not in block: continue
+                
                 qty = re.search(r"Quantity\s*\n\s*(\d+)", block)
                 quantity = qty.group(1) if qty else "1"
                 color = re.search(r"Color:\s*([^\n]+)", block)
@@ -617,7 +655,7 @@ if uploaded:
                 st.session_state.manufacturing_labels_buffer = pdf
                 st.success("Generated!")
             if st.session_state.manufacturing_labels_buffer:
-                st.download_button("⬇️ Download PDF", st.session_state.manufacturing_labels_buffer, "Manufacturing_Labels.pdf", "application/pdf", use_container_width=True)
+                st.download_button("⬇️ Download Mfg Labels", st.session_state.manufacturing_labels_buffer, "Manufacturing_Labels.pdf", "application/pdf", use_container_width=True)
         
         with c2:
             if st.button("💌 Gift Messages", use_container_width=True):
