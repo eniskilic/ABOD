@@ -4,10 +4,13 @@ import re
 import pandas as pd
 from io import BytesIO
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import inch, landscape
+from reportlab.lib.pagesizes import inch, landscape, A4
 from reportlab.lib import colors
 import requests
 from pypdf import PdfReader, PdfWriter
+from pdf2image import convert_from_bytes
+import pytesseract
+from difflib import get_close_matches
 
 # --------------------------------------
 # Page Configuration
@@ -25,47 +28,12 @@ st.set_page_config(
 st.markdown("""
 <style>
     /* Dark Mode Base */
-    .main {
-        background: #0f1419;
-        color: #e4e6eb;
-    }
-    
-    .stApp {
-        background: #0f1419;
-    }
+    .main { background: #0f1419; color: #e4e6eb; }
+    .stApp { background: #0f1419; }
     
     /* Sidebar Dark Styling */
-    [data-testid="stSidebar"] {
-        background: #1a1f2e;
-        border-right: 1px solid #2d3748;
-    }
-    
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
-        color: #e4e6eb;
-    }
-    
-    /* Sidebar Navigation Links */
-    .nav-link {
-        display: block;
-        padding: 12px 15px;
-        margin: 4px 0;
-        border-radius: 10px;
-        color: #a0aec0;
-        text-decoration: none;
-        transition: all 0.2s ease;
-        cursor: pointer;
-    }
-    
-    .nav-link:hover {
-        background: #2d3748;
-        color: #e4e6eb;
-        text-decoration: none;
-    }
-    
-    .nav-link.active {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-    }
+    [data-testid="stSidebar"] { background: #1a1f2e; border-right: 1px solid #2d3748; }
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] { color: #e4e6eb; }
     
     /* Metric Cards Dark */
     [data-testid="stMetric"] {
@@ -75,49 +43,13 @@ st.markdown("""
         border-radius: 16px;
         border-left: 3px solid #667eea;
     }
-    
     [data-testid="stMetric"]:hover {
         transform: translateY(-3px);
         box-shadow: 0 10px 30px rgba(102, 126, 234, 0.2);
-        transition: all 0.3s ease;
         border-color: #667eea;
     }
-    
-    [data-testid="stMetric"] label {
-        font-size: 0.85em !important;
-        color: #a0aec0 !important;
-        font-weight: 600 !important;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    
-    [data-testid="stMetric"] [data-testid="stMetricValue"] {
-        font-size: 2.5em !important;
-        font-weight: 700 !important;
-        color: #e4e6eb !important;
-    }
-    
-    /* Headers Dark */
-    h1 {
-        color: #e4e6eb;
-        font-weight: 700;
-        padding-bottom: 15px;
-        border-bottom: 3px solid #667eea;
-        margin-bottom: 30px;
-    }
-    
-    h2 {
-        color: #e4e6eb;
-        font-weight: 600;
-        margin-top: 40px;
-        margin-bottom: 20px;
-    }
-    
-    h3 {
-        color: #cbd5e0;
-        font-weight: 600;
-        margin-bottom: 15px;
-    }
+    [data-testid="stMetric"] label { color: #a0aec0 !important; }
+    [data-testid="stMetric"] [data-testid="stMetricValue"] { color: #e4e6eb !important; }
     
     /* Buttons Dark */
     .stButton button {
@@ -127,13 +59,6 @@ st.markdown("""
         border-radius: 10px;
         padding: 12px 24px;
         font-weight: 600;
-        transition: all 0.3s ease;
-        width: 100%;
-    }
-    
-    .stButton button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
     }
     
     /* File Uploader Dark */
@@ -143,149 +68,21 @@ st.markdown("""
         border-radius: 12px;
         border: 2px dashed #2d3748;
     }
-    
-    [data-testid="stFileUploader"]:hover {
-        border-color: #667eea;
-        background: #1e2432;
-    }
-    
-    [data-testid="stFileUploader"] label {
-        color: #e4e6eb !important;
-    }
-    
-    [data-testid="stFileUploader"] section {
-        border-color: #2d3748 !important;
-    }
-    
-    /* Info boxes Dark */
-    .stAlert {
-        background: linear-gradient(135deg, #667eea20, #764ba220) !important;
-        border: 1px solid #667eea40 !important;
-        border-radius: 10px;
-        border-left: 4px solid #667eea !important;
-        color: #cbd5e0 !important;
-    }
-    
-    /* Success boxes */
-    [data-baseweb="notification"] {
-        background: #1a1f2e !important;
-        border: 1px solid #48bb78 !important;
-        color: #e4e6eb !important;
-    }
+    [data-testid="stFileUploader"] label { color: #e4e6eb !important; }
     
     /* Dataframe Dark */
-    [data-testid="stDataFrame"] {
-        border-radius: 12px;
-        overflow: hidden;
-    }
-    
-    [data-testid="stDataFrame"] table {
-        background: #1a1f2e !important;
-        color: #e4e6eb !important;
-    }
-    
-    [data-testid="stDataFrame"] thead tr th {
-        background: #2d3748 !important;
-        color: #e4e6eb !important;
-    }
-    
-    [data-testid="stDataFrame"] tbody tr {
-        background: #1e2432 !important;
-        color: #cbd5e0 !important;
-    }
-    
-    [data-testid="stDataFrame"] tbody tr:hover {
-        background: #252d3d !important;
-    }
-    
-    /* Expander Dark */
-    [data-testid="stExpander"] {
-        background: #1a1f2e !important;
-        border-radius: 10px;
-        border: 1px solid #2d3748 !important;
-        margin-bottom: 10px;
-    }
-    
-    [data-testid="stExpander"] [data-testid="stMarkdownContainer"] {
-        color: #e4e6eb !important;
-    }
-    
-    /* Progress bar */
-    .stProgress > div > div {
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-    }
-    
-    /* Download button */
-    .stDownloadButton button {
-        background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
-        color: white;
-        border: none;
-        border-radius: 10px;
-        padding: 10px 20px;
-        font-weight: 600;
-        width: 100%;
-    }
-    
-    .stDownloadButton button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 5px 15px rgba(72, 187, 120, 0.4);
-    }
+    [data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
     
     /* Text color overrides */
-    p, span, div {
-        color: #cbd5e0;
-    }
+    p, span, div { color: #cbd5e0; }
+    strong { color: #e4e6eb; }
+    hr { border-top: 1px solid #2d3748; margin: 40px 0; }
     
-    strong {
+    /* Alert Boxes */
+    .stAlert {
+        background-color: #2d3748;
         color: #e4e6eb;
-    }
-    
-    /* Section divider */
-    hr {
-        border: none;
-        border-top: 1px solid #2d3748;
-        margin: 40px 0;
-    }
-    
-    /* Spinner Dark */
-    .stSpinner > div {
-        border-top-color: #667eea !important;
-    }
-    
-    /* Input fields */
-    input, textarea, select {
-        background: #1a1f2e !important;
-        color: #e4e6eb !important;
-        border: 1px solid #2d3748 !important;
-    }
-    
-    /* Markdown text */
-    .stMarkdown {
-        color: #cbd5e0 !important;
-    }
-    
-    /* Status indicator */
-    .status-indicator {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        background: #2d3748;
-        padding: 6px 12px;
-        border-radius: 20px;
-        font-size: 0.85em;
-    }
-    
-    .status-dot {
-        width: 8px;
-        height: 8px;
-        background: #48bb78;
-        border-radius: 50%;
-        animation: pulse 2s infinite;
-    }
-    
-    @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
+        border-radius: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -302,36 +99,19 @@ LINE_ITEMS_TABLE = "Order Line Items"
 # Color dictionary for Spanish translation
 # --------------------------------------
 COLOR_TRANSLATIONS = {
-    "white": "Blanco",
-    "black": "Negro",
-    "brown": "Marrón",
-    "blue": "Azul",
-    "navy": "Azul Marino",
-    "red": "Rojo",
-    "pink": "Rosa",
-    "light pink": "Rosa Claro",
-    "hot pink": "Rosa Fucsia",
-    "salmon pink": "Rosa Salmón",
-    "purple": "Morado",
-    "lilac": "Lila",
-    "gray": "Gris",
-    "grey": "Gris",
-    "gold": "Dorado",
-    "silver": "Plateado",
-    "beige": "Beige",
-    "green": "Verde",
-    "olive": "Verde Oliva",
-    "yellow": "Amarillo",
-    "champagne": "Champán"
+    "white": "Blanco", "black": "Negro", "brown": "Marrón", "blue": "Azul",
+    "navy": "Azul Marino", "red": "Rojo", "pink": "Rosa", "light pink": "Rosa Claro",
+    "hot pink": "Rosa Fucsia", "salmon pink": "Rosa Salmón", "purple": "Morado",
+    "lilac": "Lila", "gray": "Gris", "grey": "Gris", "gold": "Dorado",
+    "silver": "Plateado", "beige": "Beige", "green": "Verde", "olive": "Verde Oliva",
+    "yellow": "Amarillo", "champagne": "Champán"
 }
 
 # --------------------------------------
 # Helper Functions
 # --------------------------------------
 def clean_text(s: str) -> str:
-    """Cleans unwanted symbols and color codes."""
-    if not s:
-        return ""
+    if not s: return ""
     s = re.sub(r"\(#?[A-Fa-f0-9]{3,6}\)", "", s)
     s = re.sub(r"■|Seller Name|Your Orders|Returning your item:", "", s)
     s = re.sub(r"\(Most popular\)", "", s, flags=re.IGNORECASE)
@@ -339,9 +119,7 @@ def clean_text(s: str) -> str:
     return s.strip()
 
 def translate_thread_color(color):
-    """Adds Spanish translation."""
-    if not color:
-        return color
+    if not color: return color
     base = color.strip()
     for eng, esp in COLOR_TRANSLATIONS.items():
         if eng.lower() in base.lower():
@@ -349,17 +127,14 @@ def translate_thread_color(color):
     return base
 
 def get_bobbin_color(thread_color):
-    """Determine bobbin color based on thread color"""
-    thread_lower = thread_color.lower()
+    thread_lower = str(thread_color).lower()
     if 'navy' in thread_lower or 'black' in thread_lower or 'negro' in thread_lower:
         return 'Black Bobbin'
     else:
         return 'White Bobbin'
 
 def draw_checkbox(canvas_obj, x, y, size, is_checked):
-    """Draw a checkbox at position (x, y) with given size."""
     canvas_obj.saveState()
-    
     if is_checked:
         canvas_obj.setStrokeColor(colors.black)
         canvas_obj.setFillColor(colors.black)
@@ -369,110 +144,158 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
         canvas_obj.setStrokeColor(colors.black)
         canvas_obj.setLineWidth(2)
         canvas_obj.rect(x, y, size, size, stroke=1, fill=0)
-    
     canvas_obj.restoreState()
 
 # --------------------------------------
-# FIXED: Label Merging Function
+# CORE LOGIC: Robust Label Merging (Updated V3)
 # --------------------------------------
 def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pdf_bytes, order_dataframe):
     """
-    Merge shipping labels with manufacturing labels.
-    Handles orders with multiple items (one shipping label, multiple manufacturing labels).
+    Robust Merging V3: 
+    1. Indexes Manufacturing labels by Buyer Name.
+    2. Scans Shipping labels for those Names (Text + OCR fallback).
+    3. Appends correct Manufacturing pages immediately after Shipping pages.
+    4. Returns list of unmatched buyers for alerting.
     """
     try:
-        shipping_pdf = PdfReader(shipping_pdf_bytes)
-        manufacturing_pdf = PdfReader(manufacturing_pdf_bytes)
+        # --- STEP 1: Index the Manufacturing Labels ---
+        mfg_reader = PdfReader(manufacturing_pdf_bytes)
+        mfg_map = {} # Key: Buyer Name (Upper), Value: List of PdfReader Page Objects
         
-        # CRITICAL FIX: Preserve the order of orders as they appear in the dataframe
-        seen_orders = []
-        order_item_counts = []
+        current_mfg_page_idx = 0
         
-        for order_id in order_dataframe['Order ID']:
-            if order_id not in seen_orders:
-                seen_orders.append(order_id)
-                item_count = len(order_dataframe[order_dataframe['Order ID'] == order_id])
-                order_item_counts.append(item_count)
-        
-        # Build mapping: shipping label index -> list of manufacturing label indices
-        shipping_to_mfg = {}
-        mfg_index = 0
-        
-        for shipping_index, item_count in enumerate(order_item_counts):
-            shipping_to_mfg[shipping_index] = list(range(mfg_index, mfg_index + item_count))
-            mfg_index += item_count
-        
-        # Create merged PDF
-        output_pdf = PdfWriter()
-        total_shipping_labels = len(shipping_to_mfg)
-        
-        for ship_idx in range(total_shipping_labels):
-            if ship_idx >= len(shipping_pdf.pages):
-                break
-                
-            output_pdf.add_page(shipping_pdf.pages[ship_idx])
+        for _, row in order_dataframe.iterrows():
+            raw_name = str(row['Buyer Name']).strip().upper()
+            # Clean name slightly (remove extra spaces)
+            raw_name = " ".join(raw_name.split())
             
-            if ship_idx in shipping_to_mfg:
-                for mfg_idx in shipping_to_mfg[ship_idx]:
-                    if mfg_idx < len(manufacturing_pdf.pages):
-                        output_pdf.add_page(manufacturing_pdf.pages[mfg_idx])
+            if raw_name not in mfg_map:
+                mfg_map[raw_name] = []
+            
+            # If we still have pages left, assign this one to the buyer
+            if current_mfg_page_idx < len(mfg_reader.pages):
+                mfg_map[raw_name].append(mfg_reader.pages[current_mfg_page_idx])
+                current_mfg_page_idx += 1
+
+        # Known buyers list for searching
+        known_buyers = list(mfg_map.keys())
+
+        # --- STEP 2: Process Shipping Labels ---
+        output_pdf = PdfWriter()
+        shipping_pdf_bytes.seek(0)
         
+        processed_count = 0
+        matched_count = 0
+        
+        with pdfplumber.open(shipping_pdf_bytes) as plist:
+            ship_reader = PdfReader(shipping_pdf_bytes)
+            
+            for i, page in enumerate(plist.pages):
+                # A. Extract Text
+                text = page.extract_text() or ""
+                text = text.upper()
+                
+                found_name = None
+                
+                # Strategy 1: Look for "SHIP TO" specific block (High Confidence)
+                ship_to_match = re.search(r"SHIP\s*TO:?\s*\n+([^\n]+)", text)
+                if ship_to_match:
+                    candidate = ship_to_match.group(1).strip()
+                    matches = get_close_matches(candidate, known_buyers, n=1, cutoff=0.8)
+                    if matches:
+                        found_name = matches[0]
+
+                # Strategy 2: Scan full text for known buyers
+                if not found_name:
+                    for buyer in known_buyers:
+                        if buyer in text:
+                            found_name = buyer
+                            break
+                
+                # Strategy 3: OCR Fallback (If page is an image/scan)
+                if not found_name and len(text) < 50: 
+                    try:
+                        # Convert this specific page to image
+                        images = convert_from_bytes(
+                            shipping_pdf_bytes.getvalue(), 
+                            first_page=i+1, 
+                            last_page=i+1,
+                            dpi=150
+                        )
+                        if images:
+                            ocr_text = pytesseract.image_to_string(images[0]).upper()
+                            for buyer in known_buyers:
+                                if buyer in ocr_text:
+                                    found_name = buyer
+                                    break
+                    except Exception as e:
+                        print(f"OCR failed for page {i}: {e}")
+
+                # --- STEP 3: Construct Output ---
+                # Add the Shipping Label
+                output_pdf.add_page(ship_reader.pages[i])
+                processed_count += 1
+                
+                # Add the Manufacturing Label(s) if matched
+                if found_name and found_name in mfg_map:
+                    pages_to_add = mfg_map[found_name]
+                    for p in pages_to_add:
+                        output_pdf.add_page(p)
+                        matched_count += 1
+                    
+                    # Remove from map so we know it was used
+                    del mfg_map[found_name]
+
+        # --- STEP 4: Handle Orphans & Reporting ---
+        # Collect any buyers that remain in mfg_map (these are missing shipping labels)
+        unmatched_buyers = list(mfg_map.keys())
+        
+        # Append orphans to the end so they aren't lost
+        if len(mfg_map) > 0:
+            for buyer, pages in mfg_map.items():
+                for p in pages:
+                    output_pdf.add_page(p)
+
         output_buffer = BytesIO()
         output_pdf.write(output_buffer)
         output_buffer.seek(0)
         
-        return output_buffer, len(shipping_to_mfg), sum(len(v) for v in shipping_to_mfg.values())
-        
+        return output_buffer, processed_count, matched_count, unmatched_buyers
+
     except Exception as e:
-        st.error(f"Error merging labels: {str(e)}")
-        return None, 0, 0
+        st.error(f"Merge Error: {str(e)}")
+        return BytesIO(), 0, 0, []
 
 # --------------------------------------
 # Airtable Functions
 # --------------------------------------
 def get_existing_order_ids():
-    """Fetch all existing Order IDs from Airtable"""
     headers = {
         "Authorization": f"Bearer {AIRTABLE_PAT}",
         "Content-Type": "application/json"
     }
-    
     existing_orders = set()
     offset = None
-    
     try:
         while True:
             url = f"https://api.airtable.com/v0/{BASE_ID}/{ORDERS_TABLE}"
             params = {"fields[]": "Order ID"}
-            
-            if offset:
-                params["offset"] = offset
-            
+            if offset: params["offset"] = offset
             response = requests.get(url, headers=headers, params=params)
-            
             if response.status_code == 200:
                 data = response.json()
-                records = data.get("records", [])
-                
-                for record in records:
+                for record in data.get("records", []):
                     order_id = record.get("fields", {}).get("Order ID")
-                    if order_id:
-                        existing_orders.add(order_id)
-                
+                    if order_id: existing_orders.add(order_id)
                 offset = data.get("offset")
-                if not offset:
-                    break
+                if not offset: break
             else:
-                st.warning(f"Could not fetch existing orders: {response.text}")
                 break
-                
-    except Exception as e:
-        st.warning(f"Error checking for duplicates: {str(e)}")
-    
+    except Exception:
+        pass
     return existing_orders
 
 def upload_to_airtable(dataframe):
-    """Upload parsed orders to Airtable with duplicate detection"""
     headers = {
         "Authorization": f"Bearer {AIRTABLE_PAT}",
         "Content-Type": "application/json"
@@ -482,37 +305,21 @@ def upload_to_airtable(dataframe):
     existing_order_ids = get_existing_order_ids()
     
     unique_orders = dataframe[['Order ID', 'Order Date', 'Buyer Name']].drop_duplicates(subset=['Order ID'])
-    
     new_orders = unique_orders[~unique_orders['Order ID'].isin(existing_order_ids)]
-    duplicate_orders = unique_orders[unique_orders['Order ID'].isin(existing_order_ids)]
-    
-    if len(duplicate_orders) > 0:
-        st.warning(f"⚠️ Found {len(duplicate_orders)} duplicate order(s) that already exist in Airtable")
-        with st.expander("View Duplicate Orders (will be skipped)"):
-            for _, dup in duplicate_orders.iterrows():
-                st.write(f"• {dup['Order ID']} - {dup['Buyer Name']}")
     
     if len(new_orders) == 0:
-        st.info("ℹ️ All orders already exist in Airtable. Nothing to upload.")
+        st.info("ℹ️ All orders already exist in Airtable.")
         return 0, 0, []
-    
-    st.success(f"✅ Found {len(new_orders)} new order(s) to upload")
     
     orders_created = 0
     line_items_created = 0
     errors = []
-    
     progress_bar = st.progress(0)
-    status_text = st.empty()
-    
     total_orders = len(new_orders)
     
     for idx, (_, order_row) in enumerate(new_orders.iterrows()):
         order_id = order_row['Order ID']
-        
         try:
-            status_text.text(f"Creating order {idx + 1}/{total_orders}: {order_id}")
-            
             order_payload = {
                 "records": [{
                     "fields": {
@@ -523,19 +330,12 @@ def upload_to_airtable(dataframe):
                     }
                 }]
             }
-            
-            response = requests.post(
-                f"https://api.airtable.com/v0/{BASE_ID}/{ORDERS_TABLE}",
-                headers=headers,
-                json=order_payload
-            )
-            
+            response = requests.post(f"https://api.airtable.com/v0/{BASE_ID}/{ORDERS_TABLE}", headers=headers, json=order_payload)
             if response.status_code == 200:
                 airtable_order_id = response.json()["records"][0]["id"]
                 orders_created += 1
                 
                 order_items = dataframe[dataframe['Order ID'] == order_id]
-                
                 for _, item_row in order_items.iterrows():
                     line_item_payload = {
                         "records": [{
@@ -555,32 +355,19 @@ def upload_to_airtable(dataframe):
                             }
                         }]
                     }
-                    
-                    item_response = requests.post(
-                        f"https://api.airtable.com/v0/{BASE_ID}/{LINE_ITEMS_TABLE}",
-                        headers=headers,
-                        json=line_item_payload
-                    )
-                    
+                    item_response = requests.post(f"https://api.airtable.com/v0/{BASE_ID}/{LINE_ITEMS_TABLE}", headers=headers, json=line_item_payload)
                     if item_response.status_code == 200:
                         line_items_created += 1
-                    else:
-                        errors.append(f"Error creating line item for {order_id}: {item_response.text}")
             else:
-                errors.append(f"Error creating order {order_id}: {response.text}")
-        
+                errors.append(f"Error creating order {order_id}")
         except Exception as e:
-            errors.append(f"Exception for order {order_id}: {str(e)}")
-        
+            errors.append(str(e))
         progress_bar.progress((idx + 1) / total_orders)
-    
-    status_text.empty()
-    progress_bar.empty()
-    
+        
     return orders_created, line_items_created, errors
 
 # --------------------------------------
-# PDF Generation Functions (same as before)
+# PDF Generation Functions
 # --------------------------------------
 def generate_manufacturing_labels(dataframe):
     buf = BytesIO()
@@ -611,7 +398,7 @@ def generate_manufacturing_labels(dataframe):
         
         c.setFont("Helvetica-Bold", 16)
         text_y = box_y + box_height - 0.24 * inch
-        c.drawString(left + 0.1 * inch, text_y, f"BLANKET COLOR: {row['Blanket Color'].upper()}")
+        c.drawString(left + 0.1 * inch, text_y, f"BLANKET COLOR: {str(row['Blanket Color']).upper()}")
         
         text_y -= 0.32 * inch
         c.setFont("Helvetica-BoldOblique", 16)
@@ -648,7 +435,7 @@ def generate_manufacturing_labels(dataframe):
             c.setFont("Helvetica-BoldOblique", 14)
         else:
             c.setFont("Helvetica-Bold", 14)
-        c.drawCentredString(text_x, text_y, row['Include Beanie'])
+        c.drawCentredString(text_x, text_y, str(row['Include Beanie']))
         
         gift_box_x = beanie_x + frame_width + 0.2 * inch
         c.rect(gift_box_x, frame_y, frame_width, frame_height, stroke=1, fill=0)
@@ -667,7 +454,7 @@ def generate_manufacturing_labels(dataframe):
             c.setFont("Helvetica-BoldOblique", 14)
         else:
             c.setFont("Helvetica-Bold", 14)
-        c.drawCentredString(text_x, text_y, row['Gift Box'])
+        c.drawCentredString(text_x, text_y, str(row['Gift Box']))
         
         gift_note_x = gift_box_x + frame_width + 0.2 * inch
         c.rect(gift_note_x, frame_y, frame_width, frame_height, stroke=1, fill=0)
@@ -686,7 +473,7 @@ def generate_manufacturing_labels(dataframe):
             c.setFont("Helvetica-BoldOblique", 14)
         else:
             c.setFont("Helvetica-Bold", 14)
-        c.drawCentredString(text_x, text_y, row['Gift Note'])
+        c.drawCentredString(text_x, text_y, str(row['Gift Note']))
 
         c.showPage()
 
@@ -747,7 +534,6 @@ def generate_gift_message_labels(dataframe):
 
 def generate_summary_pdf(dataframe, summary_stats):
     buf = BytesIO()
-    from reportlab.lib.pagesizes import A4
     page_size = A4
     c = canvas.Canvas(buf, pagesize=page_size)
     W, H = page_size
@@ -906,16 +692,14 @@ def generate_summary_pdf(dataframe, summary_stats):
     return buf
 
 # --------------------------------------
-# SIDEBAR WITH FUNCTIONAL NAVIGATION
+# SIDEBAR
 # --------------------------------------
 with st.sidebar:
     st.markdown("# 🧵 Blanket Manager")
-    st.markdown("### Version 10.1 Dark")
+    st.markdown("### Version 10.3 (Alerts Added)")
     st.markdown("---")
     
     st.markdown("#### 📋 Quick Navigation")
-    
-    # Functional navigation links with anchor tags
     st.markdown('<a href="#upload-order" class="nav-link">📄 Upload Order</a>', unsafe_allow_html=True)
     st.markdown('<a href="#dashboard" class="nav-link">📊 Dashboard</a>', unsafe_allow_html=True)
     st.markdown('<a href="#color-analytics" class="nav-link">🎨 Color Analytics</a>', unsafe_allow_html=True)
@@ -925,42 +709,20 @@ with st.sidebar:
     st.markdown('<a href="#airtable-sync" class="nav-link">☁️ Airtable Sync</a>', unsafe_allow_html=True)
     
     st.markdown("---")
-    
-    st.markdown("#### ✨ Features")
-    st.markdown("✓ PDF Parsing")
-    st.markdown("✓ Label Generation")
-    st.markdown("✓ Order Merging")
-    st.markdown("✓ Cloud Sync")
-    st.markdown("✓ Spanish Translation")
-    st.markdown("✓ Duplicate Detection")
-    
-    st.markdown("---")
     st.markdown('<div class="status-indicator"><div class="status-dot"></div><span>System Ready</span></div>', unsafe_allow_html=True)
 
 # --------------------------------------
 # MAIN CONTENT
 # --------------------------------------
 st.title("🧵 Amazon Blanket Order Manager")
-
-st.markdown("""
-**Professional order processing & label generation system**  
-Parse Amazon PDFs • Generate labels • Merge shipments • Sync to Airtable
-""")
-
+st.markdown("**Professional order processing & label generation system**")
 st.markdown("---")
 
-# File Upload Section with anchor
+# File Upload Section
 st.markdown('<a id="upload-order"></a>', unsafe_allow_html=True)
 st.markdown("## 📄 Upload Order")
-uploaded = st.file_uploader(
-    "Drop your Amazon packing slip PDF here",
-    type=["pdf"],
-    help="Upload the packing slip PDF from your Amazon orders"
-)
+uploaded = st.file_uploader("Drop your Amazon packing slip PDF here", type=["pdf"])
 
-# --------------------------------------
-# Parse PDF
-# --------------------------------------
 if uploaded:
     st.info("⏳ Reading and parsing your PDF...")
 
@@ -983,11 +745,9 @@ if uploaded:
         order_id = ""
         order_date = ""
         m_id = re.search(r"Order ID:\s*([\d\-]+)", page_text)
-        if m_id:
-            order_id = m_id.group(1).strip()
+        if m_id: order_id = m_id.group(1).strip()
         m_date = re.search(r"Order Date:\s*([A-Za-z]{3,},?\s*[A-Za-z]+\s*\d{1,2},?\s*\d{4})", page_text)
-        if m_date:
-            order_date = m_date.group(1).strip()
+        if m_date: order_date = m_date.group(1).strip()
 
         blocks = re.split(r"(?=Customizations:)", page_text)
         for block in blocks:
@@ -1000,11 +760,9 @@ if uploaded:
             blanket_color = ""
             thread_color = ""
             b_match = re.search(r"Color:\s*([^\n]+)", block)
-            if b_match:
-                blanket_color = clean_text(b_match.group(1))
+            if b_match: blanket_color = clean_text(b_match.group(1))
             t_match = re.search(r"Thread Color:\s*([^\n]+)", block, re.IGNORECASE)
-            if t_match:
-                thread_color = translate_thread_color(clean_text(t_match.group(1)))
+            if t_match: thread_color = translate_thread_color(clean_text(t_match.group(1)))
 
             name_match = re.search(r"Name:\s*([^\n]+)", block)
             customization_name = clean_text(name_match.group(1)) if name_match else ""
@@ -1015,8 +773,7 @@ if uploaded:
 
             gift_msg_match = re.search(
                 r"Gift Message:\s*([\s\S]*?)(?=\n(?:Grand total|Returning your item|Visit|Quantity|Order Totals|$))",
-                block,
-                re.IGNORECASE
+                block, re.IGNORECASE
             )
             gift_message = clean_text(gift_msg_match.group(1)) if gift_msg_match else ""
 
@@ -1046,11 +803,8 @@ if uploaded:
     with st.expander("📊 View Order Data"):
         st.dataframe(df, use_container_width=True)
 
-    # --------------------------------------
-    # Calculate Summary Statistics
-    # --------------------------------------
+    # Calculate Stats
     df['Quantity_Int'] = df['Quantity'].astype(int)
-    
     total_blankets = df['Quantity_Int'].sum()
     total_beanies = df[df['Include Beanie'] == 'YES']['Quantity_Int'].sum()
     total_orders = df['Order ID'].nunique()
@@ -1058,75 +812,49 @@ if uploaded:
     orders_with_beanie = len(df[df['Include Beanie'] == 'YES'])
     gift_boxes_needed = len(df[df['Gift Box'] == 'YES'])
     gift_messages_needed = len(df[df['Gift Note'] == 'YES'])
-    
     blanket_color_counts = df.groupby('Blanket Color')['Quantity_Int'].sum().sort_values(ascending=False)
     thread_color_counts = df.groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
-    
     df['Bobbin_Color'] = df['Thread Color'].apply(get_bobbin_color)
     bobbin_counts = df.groupby('Bobbin_Color')['Quantity_Int'].sum()
-    
     black_bobbin_df = df[df['Bobbin_Color'] == 'Black Bobbin']
     white_bobbin_df = df[df['Bobbin_Color'] == 'White Bobbin']
-    
     black_bobbin_threads = black_bobbin_df.groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
     white_bobbin_threads = white_bobbin_df.groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
 
-    # --------------------------------------
-    # Dashboard Metrics with anchor
-    # --------------------------------------
+    # Dashboard
     st.markdown("---")
     st.markdown('<a id="dashboard"></a>', unsafe_allow_html=True)
     st.markdown("## 📊 Order Dashboard")
-    
     col1, col2, col3, col4, col5, col6 = st.columns(6)
-    
-    with col1:
-        st.metric("Total Blankets", total_blankets)
-    with col2:
-        st.metric("Total Orders", total_orders)
-    with col3:
-        st.metric("Beanies", total_beanies)
-    with col4:
-        st.metric("Gift Boxes", gift_boxes_needed)
-    with col5:
-        st.metric("Gift Messages", gift_messages_needed)
-    with col6:
-        st.metric("Unique Colors", len(blanket_color_counts))
-    
+    with col1: st.metric("Total Blankets", total_blankets)
+    with col2: st.metric("Total Orders", total_orders)
+    with col3: st.metric("Beanies", total_beanies)
+    with col4: st.metric("Gift Boxes", gift_boxes_needed)
+    with col5: st.metric("Gift Messages", gift_messages_needed)
+    with col6: st.metric("Unique Colors", len(blanket_color_counts))
     col7, col8 = st.columns(2)
-    with col7:
-        st.metric("Blanket Only", orders_blanket_only)
-    with col8:
-        st.metric("With Beanie", orders_with_beanie)
-    
-    # --------------------------------------
-    # Color Breakdown with anchor
-    # --------------------------------------
+    with col7: st.metric("Blanket Only", orders_blanket_only)
+    with col8: st.metric("With Beanie", orders_with_beanie)
+
+    # Color Analytics
     st.markdown("---")
     st.markdown('<a id="color-analytics"></a>', unsafe_allow_html=True)
     st.markdown("## 🎨 Color Analytics")
-    
     col_left, col_right = st.columns(2)
-    
     with col_left:
         st.markdown("### 🧶 Blanket Colors")
         for color, count in blanket_color_counts.items():
             st.markdown(f"**{color}:** {count}")
-    
     with col_right:
         st.markdown("### 🧵 Thread Colors")
         for color, count in thread_color_counts.items():
             st.markdown(f"**{color}:** {count}")
-    
-    # --------------------------------------
-    # Bobbin Setup Section with anchor
-    # --------------------------------------
+
+    # Bobbin Setup
     st.markdown("---")
     st.markdown('<a id="bobbin-setup"></a>', unsafe_allow_html=True)
     st.markdown("## 🧵 Bobbin Color Configuration")
-    
     col_bobbin1, col_bobbin2 = st.columns(2)
-    
     with col_bobbin1:
         st.markdown("### ⚫ Black Bobbin")
         st.metric("Total Items", bobbin_counts.get('Black Bobbin', 0))
@@ -1135,7 +863,6 @@ if uploaded:
                 st.markdown(f"• **{color}:** {count}")
         else:
             st.markdown("_No items_")
-    
     with col_bobbin2:
         st.markdown("### ⚪ White Bobbin")
         st.metric("Total Items", bobbin_counts.get('White Bobbin', 0))
@@ -1145,9 +872,7 @@ if uploaded:
         else:
             st.markdown("_No items_")
 
-    # --------------------------------------
-    # Generate Labels Section with anchor
-    # --------------------------------------
+    # Generate Labels
     st.markdown("---")
     st.markdown('<a id="generate-labels"></a>', unsafe_allow_html=True)
     st.markdown("## 📥 Generate & Download")
@@ -1156,20 +881,13 @@ if uploaded:
         st.session_state.manufacturing_labels_buffer = None
     
     col1, col2, col3 = st.columns(3)
-    
     with col1:
         if st.button("📦 Manufacturing Labels", use_container_width=True):
             with st.spinner("Generating manufacturing labels..."):
                 pdf_data = generate_manufacturing_labels(df)
                 st.session_state.manufacturing_labels_buffer = pdf_data
             st.success("✅ Labels generated!")
-            st.download_button(
-                label="⬇️ Download Manufacturing Labels",
-                data=pdf_data,
-                file_name="Manufacturing_Labels.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
+            st.download_button("⬇️ Download Manufacturing Labels", data=pdf_data, file_name="Manufacturing_Labels.pdf", mime="application/pdf", use_container_width=True)
     
     with col2:
         gift_count = len(df[df['Gift Message'] != ""])
@@ -1177,13 +895,7 @@ if uploaded:
             with st.spinner("Generating gift message labels..."):
                 pdf_data = generate_gift_message_labels(df)
             st.success("✅ Labels generated!")
-            st.download_button(
-                label="⬇️ Download Gift Message Labels",
-                data=pdf_data,
-                file_name="Gift_Message_Labels.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
+            st.download_button("⬇️ Download Gift Message Labels", data=pdf_data, file_name="Gift_Message_Labels.pdf", mime="application/pdf", use_container_width=True)
     
     with col3:
         if st.button("📊 Summary Report", use_container_width=True):
@@ -1206,117 +918,53 @@ if uploaded:
                 }
                 pdf_data = generate_summary_pdf(df, summary_stats)
             st.success("✅ Report generated!")
-            st.download_button(
-                label="⬇️ Download Summary PDF",
-                data=pdf_data,
-                file_name="Daily_Summary_Report.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
-    
-    # --------------------------------------
-    # Label Merging Section with anchor
-    # --------------------------------------
+            st.download_button("⬇️ Download Summary PDF", data=pdf_data, file_name="Daily_Summary_Report.pdf", mime="application/pdf", use_container_width=True)
+
+    # Label Merging
     st.markdown("---")
     st.markdown('<a id="label-merge"></a>', unsafe_allow_html=True)
     st.markdown("## 🔄 Merge Shipping & Manufacturing Labels")
+    st.info("**Note:** You must generate Manufacturing Labels (button above) before using this tool.")
     
-    st.info("""
-    **Instructions for Label Merging:**
-    1. Generate Manufacturing Labels above (click the button)
-    2. Upload your shipping labels PDF from Amazon/UPS
-    3. Click merge to create a combined PDF
-    
-    ✨ **Version 10.1:** Fixed label ordering for multi-item orders!
-    """)
-    
-    shipping_labels_upload = st.file_uploader(
-        "📤 Upload Shipping Labels PDF",
-        type=["pdf"],
-        key="shipping_labels",
-        help="Upload the shipping labels PDF from Amazon or your carrier"
-    )
+    shipping_labels_upload = st.file_uploader("📤 Upload Shipping Labels PDF", type=["pdf"], key="shipping_labels")
     
     if shipping_labels_upload and st.session_state.manufacturing_labels_buffer:
-        col_merge1, col_merge2 = st.columns([3, 1])
-        
-        with col_merge1:
-            if st.button("🔀 Merge Labels Now", type="primary", use_container_width=True):
-                with st.spinner("Merging shipping and manufacturing labels..."):
-                    shipping_labels_upload.seek(0)
-                    st.session_state.manufacturing_labels_buffer.seek(0)
+        if st.button("🔀 Merge Labels Now", type="primary", use_container_width=True):
+            with st.spinner("Merging labels using Smart Match & OCR..."):
+                shipping_labels_upload.seek(0)
+                st.session_state.manufacturing_labels_buffer.seek(0)
+                
+                merged_pdf, num_shipping, num_manufacturing, unmatched_list = merge_shipping_and_manufacturing_labels(
+                    shipping_labels_upload,
+                    st.session_state.manufacturing_labels_buffer,
+                    df
+                )
+                
+                if merged_pdf:
+                    st.success(f"✅ Processed {num_shipping} shipping labels and matched {num_manufacturing} manufacturing labels!")
                     
-                    merged_pdf, num_shipping, num_manufacturing = merge_shipping_and_manufacturing_labels(
-                        shipping_labels_upload,
-                        st.session_state.manufacturing_labels_buffer,
-                        df
-                    )
-                    
-                    if merged_pdf:
-                        st.success(f"✅ Successfully merged {num_shipping} shipping labels with {num_manufacturing} manufacturing labels!")
-                        
-                        multi_item_orders = df.groupby('Order ID').size()
-                        multi_item_orders = multi_item_orders[multi_item_orders > 1]
-                        
-                        if len(multi_item_orders) > 0:
-                            with st.expander(f"ℹ️ Found {len(multi_item_orders)} order(s) with multiple items"):
-                                for order_id, count in multi_item_orders.items():
-                                    buyer = df[df['Order ID'] == order_id]['Buyer Name'].iloc[0]
-                                    st.write(f"• {buyer} ({order_id}): {count} blankets")
-                        
-                        st.download_button(
-                            label="⬇️ Download Merged Labels PDF",
-                            data=merged_pdf,
-                            file_name="Merged_Shipping_Manufacturing_Labels.pdf",
-                            mime="application/pdf",
-                            use_container_width=True
-                        )
-        
-        with col_merge2:
-            st.metric("Total Orders", df['Order ID'].nunique())
-            st.metric("Total Items", len(df))
-    
-    elif shipping_labels_upload and not st.session_state.manufacturing_labels_buffer:
-        st.warning("⚠️ Please generate Manufacturing Labels first (click the button above)")
-    
-    elif not shipping_labels_upload and st.session_state.manufacturing_labels_buffer:
-        st.info("📤 Upload your shipping labels PDF above to enable merging")
+                    if unmatched_list:
+                        st.error(f"⚠️ WARNING: {len(unmatched_list)} Orders did NOT find a matching Shipping Label!")
+                        with st.expander("🚨 See Missing Orders (Attached at end of PDF)", expanded=True):
+                            for name in unmatched_list:
+                                st.write(f"❌ **{name}** - (No matching shipping label found)")
+                    else:
+                        st.balloons()
 
-    # --------------------------------------
-    # Airtable Upload Section with anchor
-    # --------------------------------------
+                    st.download_button("⬇️ Download Merged PDF", data=merged_pdf, file_name="Merged_Labels.pdf", mime="application/pdf", use_container_width=True)
+    elif shipping_labels_upload and not st.session_state.manufacturing_labels_buffer:
+        st.warning("⚠️ Please click 'Manufacturing Labels' button above first.")
+
+    # Airtable Sync
     st.markdown("---")
     st.markdown('<a id="airtable-sync"></a>', unsafe_allow_html=True)
     st.markdown("## ☁️ Airtable Integration")
-    
-    st.info("📤 Upload these orders to your Airtable base. Duplicate orders will be automatically detected and skipped.")
-    
     if st.button("🚀 Upload to Airtable", type="primary", use_container_width=True):
         with st.spinner("Uploading to Airtable..."):
             orders_created, line_items_created, errors = upload_to_airtable(df)
-        
         if errors:
-            st.error(f"⚠️ Upload completed with {len(errors)} errors")
+            st.error(f"⚠️ Completed with errors: {len(errors)}")
             with st.expander("View Errors"):
-                for error in errors:
-                    st.write(f"• {error}")
+                for error in errors: st.write(f"• {error}")
         else:
-            st.success("✅ Successfully uploaded all orders!")
-        
-        col_result1, col_result2 = st.columns(2)
-        with col_result1:
-            st.metric("Orders Created", orders_created)
-        with col_result2:
-            st.metric("Line Items Created", line_items_created)
-        
-        st.info("🔗 Go to your Airtable base to view and manage orders!")
-
-# Footer
-st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: #a0aec0; padding: 20px;'>
-    <p><strong>Amazon Blanket Order Manager v10.1 Dark</strong></p>
-    <p>Professional order processing & label generation system</p>
-</div>
-""", unsafe_allow_html=True)
-
+            st.success(f"✅ Successfully uploaded {orders_created} orders!")
