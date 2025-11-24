@@ -185,7 +185,7 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
     canvas_obj.restoreState()
 
 # --------------------------------------
-# CORE LOGIC: ROBUST PARSER & CASCADING MATCHER (V13)
+# CORE LOGIC: ROBUST PARSER & CASCADING MATCHER (V14)
 # --------------------------------------
 def normalize_text_for_search(text):
     """Aggressive normalization: uppercase, no symbols."""
@@ -196,8 +196,8 @@ def sanitize_name_string(name):
     """Removes noise like 'C/O', 'AND', '&', '(', ')' to find the core names."""
     if not name: return ""
     s = name.upper()
-    s = re.sub(r'\b(C/O|AND|OR)\b', ' ', s) # Remove connectors
-    s = re.sub(r'[&()\-]', ' ', s) # Remove symbols
+    s = re.sub(r'\b(C/O|AND|OR|FROM)\b', ' ', s)  # Remove connectors
+    s = re.sub(r'[&()\-]', ' ', s)  # Remove symbols
     return " ".join(s.split())
 
 def is_manifest_page(text):
@@ -238,8 +238,8 @@ def find_match_cascading(page_text, order_row):
     # 🥈 TIER 2: SANITIZED FULL MATCH
     if len(name_parts) >= 2:
         matches = sum(1 for part in name_parts if part in page_norm)
-        if matches >= len(name_parts) - 1: # Allow 1 miss
-             return True, "Tier 2: Sanitized Name"
+        if matches >= len(name_parts) - 1:  # Allow 1 miss
+            return True, "Tier 2: Sanitized Name"
     
     # 🥉 TIER 3: LAST NAME + STATE
     if order_state and len(order_state) == 2 and order_state in page_norm:
@@ -610,7 +610,7 @@ def generate_summary_pdf(dataframe, summary_stats):
 # --------------------------------------
 with st.sidebar:
     st.title("🧵 Blanket Manager")
-    st.markdown("### v13.0 (Robust Address Parser)")
+    st.markdown("### v14.0 (Enhanced Parser)")
     st.markdown("---")
     st.markdown('<a href="#upload-order" class="nav-link">📄 Upload Order</a>', unsafe_allow_html=True)
     st.markdown('<a href="#dashboard" class="nav-link">📊 Dashboard</a>', unsafe_allow_html=True)
@@ -643,8 +643,7 @@ if uploaded:
         for page in pdf.pages:
             text = page.extract_text() or ""
             
-            # --- UPDATED: LINE-BASED ADDRESS EXTRACTION ---
-            # This fixes the issue where "Order ID" is far away or missing from the capture block
+            # --- ENHANCED: STRICT LINE-BASED ADDRESS EXTRACTION ---
             lines = text.split('\n')
             ship_to_block = ""
             ship_idx = -1
@@ -655,25 +654,25 @@ if uploaded:
                     ship_idx = i
                     break
             
-            # If found, grab the next 5 lines (The Address Block)
+            # If found, grab EXACTLY the next 6 lines (The Address Block)
             if ship_idx != -1 and ship_idx + 1 < len(lines):
-                # Join next 5 lines to ensure we catch Name, Address, City/State/Zip
-                raw_block = "\n".join(lines[ship_idx+1 : ship_idx+7])
-                ship_to_block = raw_block
+                # Join next 6 lines to ensure we catch Name, Address, City/State/Zip
+                address_lines = lines[ship_idx+1 : ship_idx+7]
+                ship_to_block = "\n".join(address_lines)
             
-            # --- Extract Data from the Block ---
-            # Name is usually the first line of the block
+            # --- Extract Data from the Isolated Block ---
+            # Name is the first line of the block
             buyer_name = ship_to_block.strip().split('\n')[0] if ship_to_block else "Unknown"
             
-            # Zip Code (Look for 5 digits in the block)
+            # Zip Code (Look for 5 digits in THIS BLOCK ONLY)
             zip_match = re.search(r"\b(\d{5})(?:-\d{4})?", ship_to_block)
             zip_code = zip_match.group(1) if zip_match else ""
             
-            # State (Look for 2 uppercase letters before the Zip)
+            # State (Look for 2 uppercase letters before the Zip IN THIS BLOCK ONLY)
             state_match = re.search(r"\b([A-Z]{2})\s+\d{5}", ship_to_block)
             state = state_match.group(1) if state_match else ""
             
-            # --- Order Details Extraction ---
+            # --- Order Details Extraction (From Full Page) ---
             oid = re.search(r"Order ID:\s*([\d\-]+)", text)
             odate = re.search(r"Order Date:\s*([A-Za-z]{3,},?\s*[A-Za-z]+\s*\d{1,2},?\s*\d{4})", text)
             
@@ -709,7 +708,7 @@ if uploaded:
     
     if not df.empty:
         st.success(f"✅ Parsed {len(df)} items from {df['Order ID'].nunique()} orders")
-        with st.expander("📊 View Order Data (Check Zips Here!)"):
+        with st.expander("📊 View Order Data (Verify Zip Codes Here!)"):
             st.dataframe(df[['Order ID', 'Buyer Name', 'Zip Code', 'State', 'Customization Name']], use_container_width=True)
         
         # Stats
@@ -783,7 +782,7 @@ if uploaded:
         st.markdown("---")
         st.markdown('<a id="label-merge"></a>', unsafe_allow_html=True)
         st.markdown("## 🔄 Merge Shipping & Manufacturing Labels")
-        st.markdown("ℹ️ *v13 Logic: 4-Tier Cascading Matcher + Enhanced Address Parser*")
+        st.markdown("ℹ️ *v14 Logic: 4-Tier Cascading Matcher + Line-Based Address Parser*")
         ship_upload = st.file_uploader("Upload Shipping Labels (PDF)", type=["pdf"], key="ship")
         
         if ship_upload and st.session_state.manufacturing_labels_buffer:
