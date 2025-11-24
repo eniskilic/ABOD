@@ -10,7 +10,7 @@ import requests
 from pypdf import PdfReader, PdfWriter
 from pdf2image import convert_from_bytes
 import pytesseract
-from difflib import get_close_matches
+from difflib import SequenceMatcher
 
 # --------------------------------------
 # Page Configuration
@@ -186,50 +186,80 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
     canvas_obj.restoreState()
 
 # --------------------------------------
-# CORE LOGIC: Robust Label Merging (V4 - OCR Priority)
+# CORE LOGIC: Advanced Matching (V5 - Token & Manifest Aware)
 # --------------------------------------
-def normalize_string_for_matching(s):
-    """Removes spaces and punctuation to handle 'J O H N' vs 'JOHN' issues."""
+def normalize_string(s):
+    """Aggressive normalization: Uppercase, remove special chars, single spaces."""
     if not s: return ""
-    return re.sub(r'[^A-Z0-9]', '', str(s).upper())
+    # Remove everything except letters, numbers and spaces
+    s = re.sub(r'[^A-Z0-9 ]', '', str(s).upper())
+    # Collapse multiple spaces
+    return " ".join(s.split())
 
-def find_buyer_in_text(text, known_buyers_normalized, known_buyers_original):
+def is_token_match(text_tokens, name_tokens):
     """
-    Searches for a buyer name in text using normalized string matching.
-    Returns the original buyer name if found, else None.
+    Checks if a name exists in text by comparing word sets (Tokens).
+    Solves the 'KATHERINE LOHR C/O...' cutoff issue.
+    """
+    if not name_tokens: return False
+    
+    # Check for intersection
+    common = text_tokens.intersection(name_tokens)
+    
+    # If the name is short (2 words), we need 100% match
+    if len(name_tokens) <= 2:
+        return len(common) == len(name_tokens)
+    
+    # If name is long, allow partial match (e.g. if 'VILLAS' is cut to 'VILL')
+    # We require at least 70% of the name's words to be found
+    match_ratio = len(common) / len(name_tokens)
+    return match_ratio >= 0.70
+
+def find_buyer_in_text(text, known_buyers):
+    """
+    Scans text for any of the known buyers using Token Matching.
     """
     if not text: return None
     
-    # Clean up the OCR/Extracted text
-    text_upper = text.upper()
-    text_normalized = normalize_string_for_matching(text)
+    # Normalize the extracted PDF text
+    clean_pdf_text = normalize_string(text)
+    pdf_tokens = set(clean_pdf_text.split())
     
-    # 1. Direct containment check (Fastest)
-    for original_name in known_buyers_original:
-        if original_name in text_upper:
+    for original_name in known_buyers:
+        # Normalize the candidate name
+        clean_name = normalize_string(original_name)
+        name_tokens = set(clean_name.split())
+        
+        # 1. Exact Substring Match (Fastest)
+        if clean_name in clean_pdf_text:
             return original_name
             
-    # 2. Normalized check (Handles 'J O H N' bold font spacing)
-    for norm_name, original_name in zip(known_buyers_normalized, known_buyers_original):
-        if norm_name in text_normalized:
+        # 2. Token Set Match (Robust for "C/O" or truncated lines)
+        if is_token_match(pdf_tokens, name_tokens):
             return original_name
             
     return None
 
+def is_manifest_page(text):
+    """Detects if a page is the Amazon manifest/summary page."""
+    if not text: return False
+    markers = ["LIST OF ORDERS", "SUCCESSFUL LABEL PURCHASE", "112-", "113-", "114-"]
+    matches = sum(1 for m in markers if m in text.upper())
+    return matches >= 2
+
 def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pdf_bytes, order_dataframe):
     try:
         # 1. Index Manufacturing Labels
-        # Create a map of Buyer Name -> List of PDF Pages
         mfg_reader = PdfReader(manufacturing_pdf_bytes)
         mfg_map = {} 
         current_mfg_page_idx = 0
         
-        # Get list of buyers to look for
+        # Prepare buyer list
         known_buyers = []
         for _, row in order_dataframe.iterrows():
-            raw_name = str(row['Buyer Name']).strip().upper()
-            clean_name = " ".join(raw_name.split()) # Clean internal spaces
-            
+            raw_name = str(row['Buyer Name']).strip()
+            # Clean internal spaces but keep casing for display
+            clean_name = " ".join(raw_name.split()) 
             known_buyers.append(clean_name)
             
             if clean_name not in mfg_map:
@@ -239,20 +269,17 @@ def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pd
                 mfg_map[clean_name].append(mfg_reader.pages[current_mfg_page_idx])
                 current_mfg_page_idx += 1
 
-        # Create normalized versions for robust matching
-        known_buyers_normalized = [normalize_string_for_matching(name) for name in known_buyers]
         qc_tracker = {name: "❌ MISSING" for name in known_buyers}
 
         # 2. Process Shipping Labels
         output_pdf = PdfWriter()
         shipping_pdf_bytes.seek(0)
         
-        processed_count = 0
-        matched_count = 0
-        
-        # Use PDFReader for page count access
         ship_reader_for_count = PdfReader(shipping_pdf_bytes)
         total_pages = len(ship_reader_for_count.pages)
+        
+        processed_count = 0
+        matched_count = 0
         
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -261,40 +288,39 @@ def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pd
             ship_reader = PdfReader(shipping_pdf_bytes)
             
             for i, page in enumerate(plist.pages):
-                status_text.text(f"Processing Shipping Label {i+1} of {total_pages}...")
+                status_text.text(f"Processing Page {i+1}/{total_pages}...")
                 progress_bar.progress((i + 1) / total_pages)
+
+                text = page.extract_text() or ""
+                
+                # --- CHECK: Is this the Manifest Page? ---
+                if is_manifest_page(text):
+                    # Skip this page, do not add to output
+                    continue
 
                 found_name = None
                 match_method = ""
 
-                # --- STEP A: Standard Text Extraction ---
-                text = page.extract_text() or ""
-                
-                # Try to find name in standard text
-                found_name = find_buyer_in_text(text, known_buyers_normalized, known_buyers)
-                
+                # --- STEP A: Text Match ---
+                found_name = find_buyer_in_text(text, known_buyers)
                 if found_name:
-                    match_method = "Text Extract"
+                    match_method = "Text Match"
                 
-                # --- STEP B: Force OCR if Text Failed ---
-                # If we didn't find a name, we assume the text is garbled/bold/image
+                # --- STEP B: OCR Match (Fallback) ---
                 if not found_name:
                     try:
-                        # Convert specific page to image (High DPI for bold fonts)
                         images = convert_from_bytes(
                             shipping_pdf_bytes.getvalue(), 
                             first_page=i+1, 
                             last_page=i+1, 
-                            dpi=300, # Increased from 150 to 300 for bold fonts
+                            dpi=300, 
                             fmt='jpeg'
                         )
                         if images:
-                            # Run OCR
-                            ocr_text = pytesseract.image_to_string(images[0]).upper()
-                            # Search in OCR text
-                            found_name = find_buyer_in_text(ocr_text, known_buyers_normalized, known_buyers)
+                            ocr_text = pytesseract.image_to_string(images[0])
+                            found_name = find_buyer_in_text(ocr_text, known_buyers)
                             if found_name:
-                                match_method = "OCR (Image Scan)"
+                                match_method = "OCR Scan"
                     except Exception as e:
                         print(f"OCR Failed on page {i}: {e}")
 
@@ -303,16 +329,19 @@ def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pd
                 processed_count += 1
                 
                 if found_name and found_name in mfg_map:
-                    # Add matching manufacturing label(s) immediately after
+                    # Add matching manufacturing label(s)
                     pages_to_add = mfg_map[found_name]
                     for p in pages_to_add:
                         output_pdf.add_page(p)
                         matched_count += 1
                     
-                    qc_tracker[found_name] = f"✅ MATCHED via {match_method}"
-                    del mfg_map[found_name] # Remove from map so we don't add again
+                    qc_tracker[found_name] = f"✅ MATCHED ({match_method})"
+                    del mfg_map[found_name]
 
-        # 3. Handle Orphans (Manufacturing labels with no matching shipping label)
+        # 3. Handle Orphans (Last Resort Logic)
+        # If we have exactly 1 orphan and we just processed a shipping label that didn't match anything...
+        # (This is risky to automate blindly, so we append orphans at the end)
+        
         if len(mfg_map) > 0:
             for buyer, pages in mfg_map.items():
                 for p in pages:
@@ -322,11 +351,10 @@ def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pd
         output_pdf.write(output_buffer)
         output_buffer.seek(0)
         
-        # Cleanup UI
         progress_bar.empty()
         status_text.empty()
         
-        # Generate QC Dataframe
+        # QC Dataframe
         qc_data = [{"Buyer Name": name, "Status": status} for name, status in qc_tracker.items()]
         qc_df = pd.DataFrame(qc_data)
         qc_df = qc_df.sort_values(by="Status", ascending=False)
@@ -593,7 +621,7 @@ def generate_summary_pdf(dataframe, summary_stats):
 # --------------------------------------
 with st.sidebar:
     st.title("🧵 Blanket Manager")
-    st.markdown("### v10.8 (OCR Boosted)")
+    st.markdown("### v10.9 (Manifest & Token Fix)")
     st.markdown("---")
     st.markdown('<a href="#upload-order" class="nav-link">📄 Upload Order</a>', unsafe_allow_html=True)
     st.markdown('<a href="#dashboard" class="nav-link">📊 Dashboard</a>', unsafe_allow_html=True)
@@ -729,12 +757,12 @@ if uploaded:
         st.markdown("---")
         st.markdown('<a id="label-merge"></a>', unsafe_allow_html=True)
         st.markdown("## 🔄 Merge Shipping & Manufacturing Labels")
-        st.markdown("ℹ️ *Enhanced mode: Automatically scans bold fonts using OCR.*")
+        st.markdown("ℹ️ *Enhanced mode: Uses Token Matching & Auto-Skips Manifest Page.*")
         ship_upload = st.file_uploader("Upload Shipping Labels (PDF)", type=["pdf"], key="ship")
         
         if ship_upload and st.session_state.manufacturing_labels_buffer:
             if st.button("🔀 Merge & Run QC Check", type="primary", use_container_width=True):
-                with st.spinner("Analyzing labels... (OCR enabled for bold text)"):
+                with st.spinner("Analyzing labels..."):
                     ship_upload.seek(0)
                     st.session_state.manufacturing_labels_buffer.seek(0)
                     merged, n_ship, n_mfg, qc_df = merge_shipping_and_manufacturing_labels(ship_upload, st.session_state.manufacturing_labels_buffer, df)
