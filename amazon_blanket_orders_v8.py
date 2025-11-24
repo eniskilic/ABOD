@@ -10,6 +10,7 @@ import requests
 from pypdf import PdfReader, PdfWriter
 from pdf2image import convert_from_bytes
 import pytesseract
+from difflib import get_close_matches
 
 # --------------------------------------
 # Page Configuration
@@ -185,170 +186,98 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
     canvas_obj.restoreState()
 
 # --------------------------------------
-# CORE LOGIC: ROBUST PARSER & CASCADING MATCHER (V14)
+# CORE LOGIC: Robust Label Merging (V3 - With Alerts)
 # --------------------------------------
-def normalize_text_for_search(text):
-    """Aggressive normalization: uppercase, no symbols."""
-    if not text: return ""
-    return re.sub(r'[^A-Z0-9\s]', ' ', str(text).upper())
-
-def sanitize_name_string(name):
-    """Removes noise like 'C/O', 'AND', '&', '(', ')' to find the core names."""
-    if not name: return ""
-    s = name.upper()
-    s = re.sub(r'\b(C/O|AND|OR|FROM)\b', ' ', s)  # Remove connectors
-    s = re.sub(r'[&()\-]', ' ', s)  # Remove symbols
-    return " ".join(s.split())
-
-def is_manifest_page(text):
-    """Detects Amazon manifest/summary page."""
-    if not text: return False
-    text_upper = text.upper()
-    markers = ["LIST OF ORDERS", "SUCCESSFUL LABEL PURCHASE", "112-", "113-", "114-"]
-    matches = sum(1 for m in markers if m in text_upper)
-    return matches >= 2 and "SHIP TO" not in text_upper
-
-def find_match_cascading(page_text, order_row):
-    """
-    4-Step Priority Match
-    1. Zip Anchor (Best)
-    2. Sanitized Name
-    3. Last Name + State
-    4. First Name + State
-    """
-    if not page_text: return False, ""
-    
-    page_norm = normalize_text_for_search(page_text)
-    order_zip = str(order_row['Zip Code']).strip()[:5]
-    order_name = str(order_row['Buyer Name']).strip()
-    order_state = str(order_row['State']).strip().upper() 
-    
-    sanitized_order_name = sanitize_name_string(order_name)
-    name_parts = sanitized_order_name.split()
-    
-    # 🥇 TIER 1: ZIP CODE ANCHOR
-    if len(order_zip) == 5 and order_zip in page_norm:
-        significant_parts = [p for p in name_parts if len(p) > 2]
-        if not significant_parts: significant_parts = name_parts 
-        
-        for part in significant_parts:
-            if part in page_norm:
-                return True, "Tier 1: Zip + Partial Name"
-    
-    # 🥈 TIER 2: SANITIZED FULL MATCH
-    if len(name_parts) >= 2:
-        matches = sum(1 for part in name_parts if part in page_norm)
-        if matches >= len(name_parts) - 1:  # Allow 1 miss
-            return True, "Tier 2: Sanitized Name"
-    
-    # 🥉 TIER 3: LAST NAME + STATE
-    if order_state and len(order_state) == 2 and order_state in page_norm:
-        if name_parts:
-            last_name = name_parts[-1] 
-            if len(last_name) > 3 and last_name in page_norm:
-                return True, "Tier 3: Last Name + State"
-
-    # ⚠️ TIER 4: FIRST NAME + STATE
-    if order_state and len(order_state) == 2 and order_state in page_norm:
-        if name_parts:
-            first_name = name_parts[0]
-            if len(first_name) > 3 and first_name in page_norm:
-                return True, "Tier 4: First Name + State"
-
-    return False, ""
-
 def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pdf_bytes, order_dataframe):
     try:
         # 1. Index Manufacturing Labels
         mfg_reader = PdfReader(manufacturing_pdf_bytes)
         mfg_map = {} 
+        current_mfg_page_idx = 0
         
-        for idx, row in order_dataframe.iterrows():
-            page_index = idx - 1 
-            if page_index < len(mfg_reader.pages):
-                mfg_map[row['Order ID']] = mfg_reader.pages[page_index]
+        for _, row in order_dataframe.iterrows():
+            raw_name = str(row['Buyer Name']).strip().upper()
+            raw_name = " ".join(raw_name.split()) # Clean spaces
+            
+            if raw_name not in mfg_map:
+                mfg_map[raw_name] = []
+            
+            if current_mfg_page_idx < len(mfg_reader.pages):
+                mfg_map[raw_name].append(mfg_reader.pages[current_mfg_page_idx])
+                current_mfg_page_idx += 1
 
-        qc_tracker = {row['Buyer Name']: "❌ MISSING" for _, row in order_dataframe.iterrows()}
+        known_buyers = list(mfg_map.keys())
+        qc_tracker = {name: "❌ MISSING" for name in known_buyers}
 
         # 2. Process Shipping Labels
         output_pdf = PdfWriter()
         shipping_pdf_bytes.seek(0)
         
-        ship_reader_for_count = PdfReader(shipping_pdf_bytes)
-        total_pages = len(ship_reader_for_count.pages)
-        
         processed_count = 0
         matched_count = 0
         
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
         with pdfplumber.open(shipping_pdf_bytes) as plist:
             ship_reader = PdfReader(shipping_pdf_bytes)
             
             for i, page in enumerate(plist.pages):
-                status_text.text(f"Processing Page {i+1}/{total_pages}...")
-                progress_bar.progress((i + 1) / total_pages)
-
+                # Extract Text
                 text = page.extract_text() or ""
+                text = text.upper()
                 
-                # SKIP MANIFEST
-                if is_manifest_page(text):
-                    continue
-
-                matched_order_id = None
-                match_info = ""
-
-                # --- TRY TEXT MATCHING ---
-                for _, row in order_dataframe.iterrows():
-                    is_match, method = find_match_cascading(text, row)
-                    if is_match:
-                        matched_order_id = row['Order ID']
-                        matched_buyer = row['Buyer Name']
-                        match_info = method
-                        break
+                found_name = None
                 
-                # --- TRY OCR FALLBACK ---
-                if not matched_order_id:
+                # Strategy A: Look for "SHIP TO"
+                ship_to_match = re.search(r"SHIP\s*TO:?\s*\n+([^\n]+)", text)
+                if ship_to_match:
+                    candidate = ship_to_match.group(1).strip()
+                    matches = get_close_matches(candidate, known_buyers, n=1, cutoff=0.8)
+                    if matches: found_name = matches[0]
+
+                # Strategy B: Scan full text
+                if not found_name:
+                    for buyer in known_buyers:
+                        if buyer in text:
+                            found_name = buyer
+                            break
+                
+                # Strategy C: OCR Fallback
+                if not found_name and len(text) < 50: 
                     try:
-                        images = convert_from_bytes(
-                            shipping_pdf_bytes.getvalue(), 
-                            first_page=i+1, 
-                            last_page=i+1, 
-                            dpi=300, 
-                            fmt='jpeg'
-                        )
+                        images = convert_from_bytes(shipping_pdf_bytes.getvalue(), first_page=i+1, last_page=i+1, dpi=150)
                         if images:
-                            ocr_text = pytesseract.image_to_string(images[0])
-                            for _, row in order_dataframe.iterrows():
-                                is_match, method = find_match_cascading(ocr_text, row)
-                                if is_match:
-                                    matched_order_id = row['Order ID']
-                                    matched_buyer = row['Buyer Name']
-                                    match_info = f"OCR ({method})"
+                            ocr_text = pytesseract.image_to_string(images[0]).upper()
+                            for buyer in known_buyers:
+                                if buyer in ocr_text:
+                                    found_name = buyer
                                     break
-                    except Exception as e:
-                        print(f"OCR Failed: {e}")
+                    except: pass
 
-                # --- BUILD OUTPUT ---
+                # Construct PDF
                 output_pdf.add_page(ship_reader.pages[i])
                 processed_count += 1
                 
-                if matched_order_id and matched_order_id in mfg_map:
-                    output_pdf.add_page(mfg_map[matched_order_id])
-                    matched_count += 1
-                    qc_tracker[matched_buyer] = f"✅ {match_info}"
+                if found_name and found_name in mfg_map:
+                    pages_to_add = mfg_map[found_name]
+                    for p in pages_to_add:
+                        output_pdf.add_page(p)
+                        matched_count += 1
+                    qc_tracker[found_name] = f"✅ MATCHED (Pg {i+1})"
+                    del mfg_map[found_name]
+
+        # 3. Handle Orphans
+        if len(mfg_map) > 0:
+            for buyer, pages in mfg_map.items():
+                for p in pages:
+                    output_pdf.add_page(p)
 
         output_buffer = BytesIO()
         output_pdf.write(output_buffer)
         output_buffer.seek(0)
         
-        progress_bar.empty()
-        status_text.empty()
-        
+        # Generate QC Dataframe
         qc_data = [{"Buyer Name": name, "Status": status} for name, status in qc_tracker.items()]
         qc_df = pd.DataFrame(qc_data)
-        qc_df = qc_df.sort_values(by="Status", ascending=True)
+        qc_df = qc_df.sort_values(by="Status", ascending=False)
         
         return output_buffer, processed_count, matched_count, qc_df
 
@@ -610,11 +539,12 @@ def generate_summary_pdf(dataframe, summary_stats):
 # --------------------------------------
 with st.sidebar:
     st.title("🧵 Blanket Manager")
-    st.markdown("### v14.0 (Enhanced Parser)")
+    st.markdown("### v10.7 (Artisan Theme)")
     st.markdown("---")
     st.markdown('<a href="#upload-order" class="nav-link">📄 Upload Order</a>', unsafe_allow_html=True)
     st.markdown('<a href="#dashboard" class="nav-link">📊 Dashboard</a>', unsafe_allow_html=True)
     st.markdown('<a href="#color-analytics" class="nav-link">🎨 Color Analytics</a>', unsafe_allow_html=True)
+    st.markdown('<a href="#bobbin-setup" class="nav-link">🧵 Bobbin Setup</a>', unsafe_allow_html=True)
     st.markdown('<a href="#generate-labels" class="nav-link">📥 Generate Labels</a>', unsafe_allow_html=True)
     st.markdown('<a href="#label-merge" class="nav-link">🔄 Label Merge</a>', unsafe_allow_html=True)
     st.markdown('<a href="#airtable-sync" class="nav-link">☁️ Airtable Sync</a>', unsafe_allow_html=True)
@@ -624,12 +554,6 @@ with st.sidebar:
 st.title("🧵 Amazon Blanket Order Manager")
 st.markdown("**Professional order processing & label generation system**")
 st.markdown("---")
-
-# Initialize session state
-if 'merge_qc_df' not in st.session_state:
-    st.session_state.merge_qc_df = None
-if 'merged_pdf_bytes' not in st.session_state:
-    st.session_state.merged_pdf_bytes = None
 
 # 1. Upload
 st.markdown('<a id="upload-order"></a>', unsafe_allow_html=True)
@@ -642,39 +566,9 @@ if uploaded:
     with pdfplumber.open(uploaded) as pdf:
         for page in pdf.pages:
             text = page.extract_text() or ""
-            
-            # --- ENHANCED: STRICT LINE-BASED ADDRESS EXTRACTION ---
-            lines = text.split('\n')
-            ship_to_block = ""
-            ship_idx = -1
-            
-            # Locate "Ship To:" line
-            for i, line in enumerate(lines):
-                if "Ship To:" in line:
-                    ship_idx = i
-                    break
-            
-            # If found, grab EXACTLY the next 6 lines (The Address Block)
-            if ship_idx != -1 and ship_idx + 1 < len(lines):
-                # Join next 6 lines to ensure we catch Name, Address, City/State/Zip
-                address_lines = lines[ship_idx+1 : ship_idx+7]
-                ship_to_block = "\n".join(address_lines)
-            
-            # --- Extract Data from the Isolated Block ---
-            # Name is the first line of the block
-            buyer_name = ship_to_block.strip().split('\n')[0] if ship_to_block else "Unknown"
-            
-            # Zip Code (Look for 5 digits in THIS BLOCK ONLY)
-            zip_match = re.search(r"\b(\d{5})(?:-\d{4})?", ship_to_block)
-            zip_code = zip_match.group(1) if zip_match else ""
-            
-            # State (Look for 2 uppercase letters before the Zip IN THIS BLOCK ONLY)
-            state_match = re.search(r"\b([A-Z]{2})\s+\d{5}", ship_to_block)
-            state = state_match.group(1) if state_match else ""
-            
-            # --- Order Details Extraction (From Full Page) ---
             oid = re.search(r"Order ID:\s*([\d\-]+)", text)
             odate = re.search(r"Order Date:\s*([A-Za-z]{3,},?\s*[A-Za-z]+\s*\d{1,2},?\s*\d{4})", text)
+            buyer = re.search(r"Ship To:\s*([\s\S]*?)Order ID:", text)
             
             blocks = re.split(r"(?=Customizations:)", text)
             for block in blocks:
@@ -690,9 +584,7 @@ if uploaded:
                 records.append({
                     "Order ID": oid.group(1) if oid else "",
                     "Order Date": odate.group(1) if odate else "",
-                    "Buyer Name": buyer_name,
-                    "Zip Code": zip_code,
-                    "State": state,
+                    "Buyer Name": buyer.group(1).strip().split('\n')[0] if buyer else "Unknown",
                     "Quantity": quantity,
                     "Blanket Color": clean_text(color.group(1)) if color else "",
                     "Thread Color": translate_thread_color(clean_text(thread.group(1))) if thread else "",
@@ -708,14 +600,14 @@ if uploaded:
     
     if not df.empty:
         st.success(f"✅ Parsed {len(df)} items from {df['Order ID'].nunique()} orders")
-        with st.expander("📊 View Order Data (Verify Zip Codes Here!)"):
-            st.dataframe(df[['Order ID', 'Buyer Name', 'Zip Code', 'State', 'Customization Name']], use_container_width=True)
+        with st.expander("📊 View Order Data"):
+            st.dataframe(df, use_container_width=True)
         
         # Stats
         df['Quantity_Int'] = df['Quantity'].astype(int)
         total_blankets = df['Quantity_Int'].sum()
         total_beanies = df[df['Include Beanie'] == 'YES']['Quantity_Int'].sum()
-        gift_count = len(df[df['Gift Message'] != ""]) 
+        gift_count = len(df[df['Gift Message'] != ""]) # Calculate here for button
         blanket_counts = df.groupby('Blanket Color')['Quantity_Int'].sum().sort_values(ascending=False)
         thread_counts = df.groupby('Thread Color')['Quantity_Int'].sum().sort_values(ascending=False)
         
@@ -766,6 +658,7 @@ if uploaded:
 
         with c3:
             if st.button("📊 Summary Report", use_container_width=True):
+                # Simplified summary dict
                 summ = {'total_blankets': total_blankets, 'total_beanies': total_beanies, 
                         'total_orders': df['Order ID'].nunique(), 'blanket_only': len(df[df['Include Beanie']=='NO']),
                         'with_beanie': len(df[df['Include Beanie']=='YES']), 'gift_boxes': len(df[df['Gift Box']=='YES']),
@@ -782,30 +675,22 @@ if uploaded:
         st.markdown("---")
         st.markdown('<a id="label-merge"></a>', unsafe_allow_html=True)
         st.markdown("## 🔄 Merge Shipping & Manufacturing Labels")
-        st.markdown("ℹ️ *v14 Logic: 4-Tier Cascading Matcher + Line-Based Address Parser*")
         ship_upload = st.file_uploader("Upload Shipping Labels (PDF)", type=["pdf"], key="ship")
         
         if ship_upload and st.session_state.manufacturing_labels_buffer:
             if st.button("🔀 Merge & Run QC Check", type="primary", use_container_width=True):
-                with st.spinner("Analyzing labels with Cascading Logic..."):
+                with st.spinner("Merging..."):
                     ship_upload.seek(0)
                     st.session_state.manufacturing_labels_buffer.seek(0)
                     merged, n_ship, n_mfg, qc_df = merge_shipping_and_manufacturing_labels(ship_upload, st.session_state.manufacturing_labels_buffer, df)
                     
-                    # Save to session state
-                    st.session_state.merge_qc_df = qc_df
-                    st.session_state.merged_pdf_bytes = merged
-                    st.rerun()
-
-            if st.session_state.merge_qc_df is not None:
-                st.markdown("### ✅ QC Dashboard")
-                qc_df = st.session_state.merge_qc_df
-                missing = len(qc_df[qc_df['Status'].str.contains("MISSING")])
-                if missing > 0: st.error(f"⚠️ {missing} Orders Missing Labels!")
-                else: st.success("🎉 All Matched!")
-                
-                st.dataframe(qc_df, use_container_width=True)
-                st.download_button("⬇️ Download Final Merged PDF", st.session_state.merged_pdf_bytes, "Final_Merged.pdf", "application/pdf", use_container_width=True)
+                    st.markdown("### ✅ QC Dashboard")
+                    missing = len(qc_df[qc_df['Status'].str.contains("MISSING")])
+                    if missing > 0: st.error(f"⚠️ {missing} Orders Missing Labels!")
+                    else: st.success("🎉 All Matched!")
+                    
+                    st.dataframe(qc_df, use_container_width=True)
+                    st.download_button("⬇️ Download Final Merged PDF", merged, "Final_Merged.pdf", "application/pdf", use_container_width=True)
         
         # Airtable
         st.markdown("---")
