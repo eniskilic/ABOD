@@ -185,7 +185,7 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
     canvas_obj.restoreState()
 
 # --------------------------------------
-# CORE LOGIC: CASCADING MATCHER (V12)
+# CORE LOGIC: ROBUST PARSER & CASCADING MATCHER (V13)
 # --------------------------------------
 def normalize_text_for_search(text):
     """Aggressive normalization: uppercase, no symbols."""
@@ -210,28 +210,24 @@ def is_manifest_page(text):
 
 def find_match_cascading(page_text, order_row):
     """
-    V12 Logic: 4-Step Priority Match
+    4-Step Priority Match
     1. Zip Anchor (Best)
-    2. Sanitized Name (For "Ian & Laura")
-    3. Last Name + State (If Zip fails)
-    4. First Name + State (If Last Name fails, e.g. "Sam (from Aditi)")
+    2. Sanitized Name
+    3. Last Name + State
+    4. First Name + State
     """
     if not page_text: return False, ""
     
     page_norm = normalize_text_for_search(page_text)
     order_zip = str(order_row['Zip Code']).strip()[:5]
     order_name = str(order_row['Buyer Name']).strip()
-    order_state = str(order_row['State']).strip().upper() # Extracted from order
+    order_state = str(order_row['State']).strip().upper() 
     
     sanitized_order_name = sanitize_name_string(order_name)
     name_parts = sanitized_order_name.split()
     
-    # -------------------------------------------
-    # 🥇 TIER 1: ZIP CODE ANCHOR (95% Accuracy)
-    # -------------------------------------------
+    # 🥇 TIER 1: ZIP CODE ANCHOR
     if len(order_zip) == 5 and order_zip in page_norm:
-        # Zip found! Verify with ANY part of the name
-        # Filter out tiny words like "JR", "SR", "II"
         significant_parts = [p for p in name_parts if len(p) > 2]
         if not significant_parts: significant_parts = name_parts 
         
@@ -239,29 +235,20 @@ def find_match_cascading(page_text, order_row):
             if part in page_norm:
                 return True, "Tier 1: Zip + Partial Name"
     
-    # -------------------------------------------
-    # 🥈 TIER 2: SANITIZED FULL MATCH (For "Ian & Laura")
-    # -------------------------------------------
-    # If zip failed (maybe extracted wrong), try matching sanitized name parts
-    # We require matching at least 2 parts if available, or 1 if only 1 exists
+    # 🥈 TIER 2: SANITIZED FULL MATCH
     if len(name_parts) >= 2:
         matches = sum(1 for part in name_parts if part in page_norm)
         if matches >= len(name_parts) - 1: # Allow 1 miss
              return True, "Tier 2: Sanitized Name"
     
-    # -------------------------------------------
-    # 🥉 TIER 3: LAST NAME + STATE (For complex addresses)
-    # -------------------------------------------
-    # Require State match to avoid "John Smith" in wrong state
+    # 🥉 TIER 3: LAST NAME + STATE
     if order_state and len(order_state) == 2 and order_state in page_norm:
         if name_parts:
-            last_name = name_parts[-1] # Assume last part is last name
+            last_name = name_parts[-1] 
             if len(last_name) > 3 and last_name in page_norm:
                 return True, "Tier 3: Last Name + State"
 
-    # -------------------------------------------
-    # ⚠️ TIER 4: FIRST NAME + STATE (The "Sam (from Aditi)" Fix)
-    # -------------------------------------------
+    # ⚠️ TIER 4: FIRST NAME + STATE
     if order_state and len(order_state) == 2 and order_state in page_norm:
         if name_parts:
             first_name = name_parts[0]
@@ -272,7 +259,7 @@ def find_match_cascading(page_text, order_row):
 
 def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pdf_bytes, order_dataframe):
     try:
-        # 1. Index Manufacturing Labels by Order ID
+        # 1. Index Manufacturing Labels
         mfg_reader = PdfReader(manufacturing_pdf_bytes)
         mfg_map = {} 
         
@@ -321,7 +308,7 @@ def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pd
                         match_info = method
                         break
                 
-                # --- TRY OCR FALLBACK (Only if Text Fails) ---
+                # --- TRY OCR FALLBACK ---
                 if not matched_order_id:
                     try:
                         images = convert_from_bytes(
@@ -623,7 +610,7 @@ def generate_summary_pdf(dataframe, summary_stats):
 # --------------------------------------
 with st.sidebar:
     st.title("🧵 Blanket Manager")
-    st.markdown("### v12.0 (Cascading Matcher)")
+    st.markdown("### v13.0 (Robust Address Parser)")
     st.markdown("---")
     st.markdown('<a href="#upload-order" class="nav-link">📄 Upload Order</a>', unsafe_allow_html=True)
     st.markdown('<a href="#dashboard" class="nav-link">📊 Dashboard</a>', unsafe_allow_html=True)
@@ -656,21 +643,39 @@ if uploaded:
         for page in pdf.pages:
             text = page.extract_text() or ""
             
-            # --- Extraction Regex ---
-            oid = re.search(r"Order ID:\s*([\d\-]+)", text)
-            odate = re.search(r"Order Date:\s*([A-Za-z]{3,},?\s*[A-Za-z]+\s*\d{1,2},?\s*\d{4})", text)
-            buyer_match = re.search(r"Ship To:\s*([\s\S]*?)Order ID:", text)
+            # --- UPDATED: LINE-BASED ADDRESS EXTRACTION ---
+            # This fixes the issue where "Order ID" is far away or missing from the capture block
+            lines = text.split('\n')
+            ship_to_block = ""
+            ship_idx = -1
             
-            # --- ZIP & STATE EXTRACTION ---
-            ship_to_block = buyer_match.group(1) if buyer_match else ""
+            # Locate "Ship To:" line
+            for i, line in enumerate(lines):
+                if "Ship To:" in line:
+                    ship_idx = i
+                    break
             
-            # Find 5 digit zip
+            # If found, grab the next 5 lines (The Address Block)
+            if ship_idx != -1 and ship_idx + 1 < len(lines):
+                # Join next 5 lines to ensure we catch Name, Address, City/State/Zip
+                raw_block = "\n".join(lines[ship_idx+1 : ship_idx+7])
+                ship_to_block = raw_block
+            
+            # --- Extract Data from the Block ---
+            # Name is usually the first line of the block
+            buyer_name = ship_to_block.strip().split('\n')[0] if ship_to_block else "Unknown"
+            
+            # Zip Code (Look for 5 digits in the block)
             zip_match = re.search(r"\b(\d{5})(?:-\d{4})?", ship_to_block)
             zip_code = zip_match.group(1) if zip_match else ""
             
-            # Find State (2 uppercase letters before Zip)
+            # State (Look for 2 uppercase letters before the Zip)
             state_match = re.search(r"\b([A-Z]{2})\s+\d{5}", ship_to_block)
             state = state_match.group(1) if state_match else ""
+            
+            # --- Order Details Extraction ---
+            oid = re.search(r"Order ID:\s*([\d\-]+)", text)
+            odate = re.search(r"Order Date:\s*([A-Za-z]{3,},?\s*[A-Za-z]+\s*\d{1,2},?\s*\d{4})", text)
             
             blocks = re.split(r"(?=Customizations:)", text)
             for block in blocks:
@@ -686,7 +691,7 @@ if uploaded:
                 records.append({
                     "Order ID": oid.group(1) if oid else "",
                     "Order Date": odate.group(1) if odate else "",
-                    "Buyer Name": ship_to_block.strip().split('\n')[0] if ship_to_block else "Unknown",
+                    "Buyer Name": buyer_name,
                     "Zip Code": zip_code,
                     "State": state,
                     "Quantity": quantity,
@@ -704,8 +709,8 @@ if uploaded:
     
     if not df.empty:
         st.success(f"✅ Parsed {len(df)} items from {df['Order ID'].nunique()} orders")
-        with st.expander("📊 View Order Data"):
-            st.dataframe(df, use_container_width=True)
+        with st.expander("📊 View Order Data (Check Zips Here!)"):
+            st.dataframe(df[['Order ID', 'Buyer Name', 'Zip Code', 'State', 'Customization Name']], use_container_width=True)
         
         # Stats
         df['Quantity_Int'] = df['Quantity'].astype(int)
@@ -778,7 +783,7 @@ if uploaded:
         st.markdown("---")
         st.markdown('<a id="label-merge"></a>', unsafe_allow_html=True)
         st.markdown("## 🔄 Merge Shipping & Manufacturing Labels")
-        st.markdown("ℹ️ *v12 Logic: 4-Tier Cascading Matcher (Zip -> Name -> State Fallback)*")
+        st.markdown("ℹ️ *v13 Logic: 4-Tier Cascading Matcher + Enhanced Address Parser*")
         ship_upload = st.file_uploader("Upload Shipping Labels (PDF)", type=["pdf"], key="ship")
         
         if ship_upload and st.session_state.manufacturing_labels_buffer:
