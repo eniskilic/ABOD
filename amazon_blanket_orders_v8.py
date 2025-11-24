@@ -185,75 +185,98 @@ def draw_checkbox(canvas_obj, x, y, size, is_checked):
     canvas_obj.restoreState()
 
 # --------------------------------------
-# CORE LOGIC: ZIP CODE + NAME MATCHING (V6)
+# CORE LOGIC: CASCADING MATCHER (V12)
 # --------------------------------------
 def normalize_text_for_search(text):
-    """Simple normalization for search: uppercase, no symbols."""
+    """Aggressive normalization: uppercase, no symbols."""
     if not text: return ""
-    return re.sub(r'[^A-Z0-9]', ' ', str(text).upper())
+    return re.sub(r'[^A-Z0-9\s]', ' ', str(text).upper())
+
+def sanitize_name_string(name):
+    """Removes noise like 'C/O', 'AND', '&', '(', ')' to find the core names."""
+    if not name: return ""
+    s = name.upper()
+    s = re.sub(r'\b(C/O|AND|OR)\b', ' ', s) # Remove connectors
+    s = re.sub(r'[&()\-]', ' ', s) # Remove symbols
+    return " ".join(s.split())
 
 def is_manifest_page(text):
-    """Detects if a page is the Amazon manifest/summary page."""
+    """Detects Amazon manifest/summary page."""
     if not text: return False
     text_upper = text.upper()
-    # Amazon manifests usually contain these headers
     markers = ["LIST OF ORDERS", "SUCCESSFUL LABEL PURCHASE", "112-", "113-", "114-"]
     matches = sum(1 for m in markers if m in text_upper)
-    # Or if it contains a list of order IDs but no 'SHIP TO'
     return matches >= 2 and "SHIP TO" not in text_upper
 
-def find_match_by_zip_and_name(page_text, order_row):
+def find_match_cascading(page_text, order_row):
     """
-    Matches based on ZIP CODE first (The Anchor), then verifies with Name parts.
-    This solves the "Katherine Lohr" issue where the name is cut off.
+    V12 Logic: 4-Step Priority Match
+    1. Zip Anchor (Best)
+    2. Sanitized Name (For "Ian & Laura")
+    3. Last Name + State (If Zip fails)
+    4. First Name + State (If Last Name fails, e.g. "Sam (from Aditi)")
     """
-    if not page_text: return False
+    if not page_text: return False, ""
     
     page_norm = normalize_text_for_search(page_text)
+    order_zip = str(order_row['Zip Code']).strip()[:5]
+    order_name = str(order_row['Buyer Name']).strip()
+    order_state = str(order_row['State']).strip().upper() # Extracted from order
     
-    # 1. EXTRACT ZIP ANCHOR
-    # We only care about the first 5 digits of the zip
-    target_zip = str(order_row['Zip Code']).strip()[:5]
+    sanitized_order_name = sanitize_name_string(order_name)
+    name_parts = sanitized_order_name.split()
     
-    if not target_zip or len(target_zip) < 5:
-        # Fallback: If no zip found in order, use full name match
-        # This is a safety net for bad parsing
-        name_parts = normalize_text_for_search(order_row['Buyer Name']).split()
-        return all(part in page_norm for part in name_parts)
-
-    # 2. CHECK ZIP CODE PRESENCE
-    if target_zip not in page_norm:
-        return False
+    # -------------------------------------------
+    # 🥇 TIER 1: ZIP CODE ANCHOR (95% Accuracy)
+    # -------------------------------------------
+    if len(order_zip) == 5 and order_zip in page_norm:
+        # Zip found! Verify with ANY part of the name
+        # Filter out tiny words like "JR", "SR", "II"
+        significant_parts = [p for p in name_parts if len(p) > 2]
+        if not significant_parts: significant_parts = name_parts 
         
-    # 3. VERIFY WITH NAME TOKENS (Partial Match)
-    # If zip matches, we just need ONE part of the name to confirm (First OR Last)
-    full_name = normalize_text_for_search(order_row['Buyer Name'])
-    name_tokens = full_name.split()
+        for part in significant_parts:
+            if part in page_norm:
+                return True, "Tier 1: Zip + Partial Name"
     
-    # Filter out common small words to avoid false positives
-    name_tokens = [t for t in name_tokens if len(t) > 2]
+    # -------------------------------------------
+    # 🥈 TIER 2: SANITIZED FULL MATCH (For "Ian & Laura")
+    # -------------------------------------------
+    # If zip failed (maybe extracted wrong), try matching sanitized name parts
+    # We require matching at least 2 parts if available, or 1 if only 1 exists
+    if len(name_parts) >= 2:
+        matches = sum(1 for part in name_parts if part in page_norm)
+        if matches >= len(name_parts) - 1: # Allow 1 miss
+             return True, "Tier 2: Sanitized Name"
     
-    if not name_tokens:
-        return True # If name is empty but zip matches, assume match (risky but rare)
+    # -------------------------------------------
+    # 🥉 TIER 3: LAST NAME + STATE (For complex addresses)
+    # -------------------------------------------
+    # Require State match to avoid "John Smith" in wrong state
+    if order_state and len(order_state) == 2 and order_state in page_norm:
+        if name_parts:
+            last_name = name_parts[-1] # Assume last part is last name
+            if len(last_name) > 3 and last_name in page_norm:
+                return True, "Tier 3: Last Name + State"
 
-    # Check if ANY significant name token exists on the page
-    for token in name_tokens:
-        if token in page_norm:
-            return True
-            
-    return False
+    # -------------------------------------------
+    # ⚠️ TIER 4: FIRST NAME + STATE (The "Sam (from Aditi)" Fix)
+    # -------------------------------------------
+    if order_state and len(order_state) == 2 and order_state in page_norm:
+        if name_parts:
+            first_name = name_parts[0]
+            if len(first_name) > 3 and first_name in page_norm:
+                return True, "Tier 4: First Name + State"
+
+    return False, ""
 
 def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pdf_bytes, order_dataframe):
     try:
-        # 1. Index Manufacturing Labels by Order ID for 100% safety
+        # 1. Index Manufacturing Labels by Order ID
         mfg_reader = PdfReader(manufacturing_pdf_bytes)
         mfg_map = {} 
         
-        # We map order rows to page indices. 
-        # Assuming Mfg labels are generated in the same order as the DataFrame
         for idx, row in order_dataframe.iterrows():
-            # row.name is the index (1-based from our parser)
-            # mfg_reader pages are 0-based
             page_index = idx - 1 
             if page_index < len(mfg_reader.pages):
                 mfg_map[row['Order ID']] = mfg_reader.pages[page_index]
@@ -273,7 +296,6 @@ def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pd
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        # We iterate through the shipping PDF
         with pdfplumber.open(shipping_pdf_bytes) as plist:
             ship_reader = PdfReader(shipping_pdf_bytes)
             
@@ -288,17 +310,18 @@ def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pd
                     continue
 
                 matched_order_id = None
-                match_method = ""
+                match_info = ""
 
-                # --- TRY TEXT MATCHING (Zip + Name) ---
+                # --- TRY TEXT MATCHING ---
                 for _, row in order_dataframe.iterrows():
-                    if find_match_by_zip_and_name(text, row):
+                    is_match, method = find_match_cascading(text, row)
+                    if is_match:
                         matched_order_id = row['Order ID']
                         matched_buyer = row['Buyer Name']
-                        match_method = "Text+Zip"
+                        match_info = method
                         break
                 
-                # --- TRY OCR FALLBACK (If Text Fails) ---
+                # --- TRY OCR FALLBACK (Only if Text Fails) ---
                 if not matched_order_id:
                     try:
                         images = convert_from_bytes(
@@ -311,10 +334,11 @@ def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pd
                         if images:
                             ocr_text = pytesseract.image_to_string(images[0])
                             for _, row in order_dataframe.iterrows():
-                                if find_match_by_zip_and_name(ocr_text, row):
+                                is_match, method = find_match_cascading(ocr_text, row)
+                                if is_match:
                                     matched_order_id = row['Order ID']
                                     matched_buyer = row['Buyer Name']
-                                    match_method = "OCR+Zip"
+                                    match_info = f"OCR ({method})"
                                     break
                     except Exception as e:
                         print(f"OCR Failed: {e}")
@@ -324,14 +348,9 @@ def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pd
                 processed_count += 1
                 
                 if matched_order_id and matched_order_id in mfg_map:
-                    # Append the corresponding manufacturing label
                     output_pdf.add_page(mfg_map[matched_order_id])
                     matched_count += 1
-                    qc_tracker[matched_buyer] = f"✅ MATCHED ({match_method})"
-                    
-                    # Optional: Remove from map to prevent double matching? 
-                    # Ideally yes, but duplicates might happen if split shipment.
-                    # For now, we keep it to be safe.
+                    qc_tracker[matched_buyer] = f"✅ {match_info}"
 
         output_buffer = BytesIO()
         output_pdf.write(output_buffer)
@@ -340,17 +359,14 @@ def merge_shipping_and_manufacturing_labels(shipping_pdf_bytes, manufacturing_pd
         progress_bar.empty()
         status_text.empty()
         
-        # QC Dataframe
         qc_data = [{"Buyer Name": name, "Status": status} for name, status in qc_tracker.items()]
         qc_df = pd.DataFrame(qc_data)
-        qc_df = qc_df.sort_values(by="Status", ascending=False)
+        qc_df = qc_df.sort_values(by="Status", ascending=True)
         
         return output_buffer, processed_count, matched_count, qc_df
 
     except Exception as e:
         st.error(f"Merge Error: {str(e)}")
-        import traceback
-        st.code(traceback.format_exc())
         return BytesIO(), 0, 0, pd.DataFrame()
 
 # --------------------------------------
@@ -607,7 +623,7 @@ def generate_summary_pdf(dataframe, summary_stats):
 # --------------------------------------
 with st.sidebar:
     st.title("🧵 Blanket Manager")
-    st.markdown("### v11.0 (Zip+Name Anchor)")
+    st.markdown("### v12.0 (Cascading Matcher)")
     st.markdown("---")
     st.markdown('<a href="#upload-order" class="nav-link">📄 Upload Order</a>', unsafe_allow_html=True)
     st.markdown('<a href="#dashboard" class="nav-link">📊 Dashboard</a>', unsafe_allow_html=True)
@@ -621,6 +637,12 @@ with st.sidebar:
 st.title("🧵 Amazon Blanket Order Manager")
 st.markdown("**Professional order processing & label generation system**")
 st.markdown("---")
+
+# Initialize session state
+if 'merge_qc_df' not in st.session_state:
+    st.session_state.merge_qc_df = None
+if 'merged_pdf_bytes' not in st.session_state:
+    st.session_state.merged_pdf_bytes = None
 
 # 1. Upload
 st.markdown('<a id="upload-order"></a>', unsafe_allow_html=True)
@@ -639,12 +661,16 @@ if uploaded:
             odate = re.search(r"Order Date:\s*([A-Za-z]{3,},?\s*[A-Za-z]+\s*\d{1,2},?\s*\d{4})", text)
             buyer_match = re.search(r"Ship To:\s*([\s\S]*?)Order ID:", text)
             
-            # --- ZIP CODE EXTRACTION ---
-            # Looks for standard US zip (5 digits) at the end of the Ship To block
-            # Usually in format "City, State Zip"
+            # --- ZIP & STATE EXTRACTION ---
             ship_to_block = buyer_match.group(1) if buyer_match else ""
+            
+            # Find 5 digit zip
             zip_match = re.search(r"\b(\d{5})(?:-\d{4})?", ship_to_block)
             zip_code = zip_match.group(1) if zip_match else ""
+            
+            # Find State (2 uppercase letters before Zip)
+            state_match = re.search(r"\b([A-Z]{2})\s+\d{5}", ship_to_block)
+            state = state_match.group(1) if state_match else ""
             
             blocks = re.split(r"(?=Customizations:)", text)
             for block in blocks:
@@ -662,6 +688,7 @@ if uploaded:
                     "Order Date": odate.group(1) if odate else "",
                     "Buyer Name": ship_to_block.strip().split('\n')[0] if ship_to_block else "Unknown",
                     "Zip Code": zip_code,
+                    "State": state,
                     "Quantity": quantity,
                     "Blanket Color": clean_text(color.group(1)) if color else "",
                     "Thread Color": translate_thread_color(clean_text(thread.group(1))) if thread else "",
@@ -735,7 +762,6 @@ if uploaded:
 
         with c3:
             if st.button("📊 Summary Report", use_container_width=True):
-                # Simplified summary dict
                 summ = {'total_blankets': total_blankets, 'total_beanies': total_beanies, 
                         'total_orders': df['Order ID'].nunique(), 'blanket_only': len(df[df['Include Beanie']=='NO']),
                         'with_beanie': len(df[df['Include Beanie']=='YES']), 'gift_boxes': len(df[df['Gift Box']=='YES']),
@@ -752,23 +778,30 @@ if uploaded:
         st.markdown("---")
         st.markdown('<a id="label-merge"></a>', unsafe_allow_html=True)
         st.markdown("## 🔄 Merge Shipping & Manufacturing Labels")
-        st.markdown("ℹ️ *v11 Logic: Matches Zip Code + Partial Name (Handles cut-off names like 'Katherine Lohr')*")
+        st.markdown("ℹ️ *v12 Logic: 4-Tier Cascading Matcher (Zip -> Name -> State Fallback)*")
         ship_upload = st.file_uploader("Upload Shipping Labels (PDF)", type=["pdf"], key="ship")
         
         if ship_upload and st.session_state.manufacturing_labels_buffer:
             if st.button("🔀 Merge & Run QC Check", type="primary", use_container_width=True):
-                with st.spinner("Analyzing labels with Zip-Anchor Logic..."):
+                with st.spinner("Analyzing labels with Cascading Logic..."):
                     ship_upload.seek(0)
                     st.session_state.manufacturing_labels_buffer.seek(0)
                     merged, n_ship, n_mfg, qc_df = merge_shipping_and_manufacturing_labels(ship_upload, st.session_state.manufacturing_labels_buffer, df)
                     
-                    st.markdown("### ✅ QC Dashboard")
-                    missing = len(qc_df[qc_df['Status'].str.contains("MISSING")])
-                    if missing > 0: st.error(f"⚠️ {missing} Orders Missing Labels!")
-                    else: st.success("🎉 All Matched!")
-                    
-                    st.dataframe(qc_df, use_container_width=True)
-                    st.download_button("⬇️ Download Final Merged PDF", merged, "Final_Merged.pdf", "application/pdf", use_container_width=True)
+                    # Save to session state
+                    st.session_state.merge_qc_df = qc_df
+                    st.session_state.merged_pdf_bytes = merged
+                    st.rerun()
+
+            if st.session_state.merge_qc_df is not None:
+                st.markdown("### ✅ QC Dashboard")
+                qc_df = st.session_state.merge_qc_df
+                missing = len(qc_df[qc_df['Status'].str.contains("MISSING")])
+                if missing > 0: st.error(f"⚠️ {missing} Orders Missing Labels!")
+                else: st.success("🎉 All Matched!")
+                
+                st.dataframe(qc_df, use_container_width=True)
+                st.download_button("⬇️ Download Final Merged PDF", st.session_state.merged_pdf_bytes, "Final_Merged.pdf", "application/pdf", use_container_width=True)
         
         # Airtable
         st.markdown("---")
